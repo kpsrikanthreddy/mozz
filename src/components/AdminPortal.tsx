@@ -1,0 +1,1382 @@
+import React, { useState } from 'react';
+import { useStore } from '../context/StoreContext';
+import { Order, OrderStatus, MenuItem, FoodCategory, DietaryType } from '../types';
+import {
+  ShieldAlert,
+  Lock,
+  LogOut,
+  Flame,
+  CheckCircle2,
+  Clock,
+  Printer,
+  TrendingUp,
+  Package,
+  Sliders,
+  DollarSign,
+  Search,
+  Filter,
+  Layers,
+  Sparkles,
+  AlertTriangle,
+  RotateCcw,
+  Volume2,
+  VolumeX,
+  Plus,
+  Trash2,
+  Edit2,
+  X,
+  ChefHat,
+  Receipt,
+  Wifi,
+  Settings2,
+  Check,
+  Calendar,
+} from 'lucide-react';
+import { SHAPE_DETAILS } from '../data/menuData';
+import { PrintModal } from './PrintModal';
+import { OrderCalendarView } from './OrderCalendarView';
+
+interface AdminPortalProps {
+  onBackToMenu: () => void;
+}
+
+export const AdminPortal: React.FC<AdminPortalProps> = ({ onBackToMenu }) => {
+  const {
+    orders,
+    menu,
+    isAdminAuthenticated,
+    loginAdmin,
+    logoutAdmin,
+    updateOrderStatus,
+    cancelOrder,
+    toggleItemStock,
+    updateItemPrice,
+    addMenuItem,
+    updateMenuItem,
+    deleteMenuItem,
+    resetMenuToDefault,
+    soundEnabled,
+    toggleSound,
+  } = useStore();
+
+  const [pinInput, setPinInput] = useState('');
+  const [loginError, setLoginError] = useState('');
+  const [adminTab, setAdminTab] = useState<'orders' | 'calendar' | 'menu_stock' | 'printers' | 'analytics'>('orders');
+  const [orderStatusFilter, setOrderStatusFilter] = useState<string>('all');
+  const [menuSearch, setMenuSearch] = useState('');
+
+  // Print Modal State
+  const [printModalData, setPrintModalData] = useState<{ order: Order; type: 'kot' | 'receipt' } | null>(null);
+
+  // Printer Management Configuration
+  const [printerSettings, setPrinterSettings] = useState({
+    autoPrintKOTOnDineIn: true,
+    autoPrintReceiptOnPaid: true,
+    paperWidth: '80mm' as '80mm' | '58mm',
+    kitchenPrinterStatus: 'connected' as 'connected' | 'offline',
+    billingPrinterStatus: 'connected' as 'connected' | 'offline',
+    kitchenPrinterIP: '192.168.1.188 (Port 9100 - Pizza & Wok Station)',
+    billingPrinterIP: '192.168.1.189 (Port 9100 - Cashier Billing)',
+    kotHeaderNote: 'Prepare Fresh with Extra Mozzarella • Dine-In Priority',
+  });
+
+  // Add / Edit Item Modal State
+  const [isItemModalOpen, setIsItemModalOpen] = useState(false);
+  const [editingItem, setEditingItem] = useState<MenuItem | null>(null);
+  const [formData, setFormData] = useState({
+    name: '',
+    category: 'pocket_pizza_veg' as FoodCategory,
+    dietary: 'veg' as DietaryType,
+    description: '',
+    isPocketPizza: false,
+    price: 149,
+    priceR: 99,
+    priceC: 139,
+    priceS: 179,
+    image: 'https://images.unsplash.com/photo-1513104890138-7c749659a591?w=600&auto=format&fit=crop&q=80',
+    badge: '',
+    inStock: true,
+  });
+
+  const openAddItemModal = () => {
+    setEditingItem(null);
+    setFormData({
+      name: '',
+      category: 'pocket_pizza_veg',
+      dietary: 'veg',
+      description: '',
+      isPocketPizza: false,
+      price: 149,
+      priceR: 99,
+      priceC: 139,
+      priceS: 179,
+      image: 'https://images.unsplash.com/photo-1513104890138-7c749659a591?w=600&auto=format&fit=crop&q=80',
+      badge: '',
+      inStock: true,
+    });
+    setIsItemModalOpen(true);
+  };
+
+  const openEditItemModal = (item: MenuItem) => {
+    setEditingItem(item);
+    setFormData({
+      name: item.name,
+      category: item.category,
+      dietary: item.dietary,
+      description: item.description || '',
+      isPocketPizza: !!item.isPocketPizza,
+      price: item.price || 149,
+      priceR: item.prices?.R || 99,
+      priceC: item.prices?.C || 139,
+      priceS: item.prices?.S || 179,
+      image: item.image || 'https://images.unsplash.com/photo-1513104890138-7c749659a591?w=600&auto=format&fit=crop&q=80',
+      badge: item.badge || '',
+      inStock: item.inStock,
+    });
+    setIsItemModalOpen(true);
+  };
+
+  const handleSaveItem = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!formData.name.trim()) return;
+
+    const itemPayload: any = {
+      name: formData.name.trim(),
+      category: formData.category,
+      dietary: formData.dietary,
+      description: formData.description.trim(),
+      isPocketPizza: formData.isPocketPizza,
+      image: formData.image.trim(),
+      badge: formData.badge.trim() || undefined,
+      inStock: formData.inStock,
+    };
+
+    if (formData.isPocketPizza) {
+      itemPayload.prices = {
+        R: Number(formData.priceR) || 99,
+        C: Number(formData.priceC) || 139,
+        S: Number(formData.priceS) || 179,
+      };
+    } else {
+      itemPayload.price = Number(formData.price) || 99;
+    }
+
+    if (editingItem) {
+      updateMenuItem(editingItem.id, itemPayload);
+    } else {
+      addMenuItem(itemPayload);
+    }
+    setIsItemModalOpen(false);
+  };
+
+  const handleDeleteItem = (itemId: string, itemName: string) => {
+    if (window.confirm(`Are you sure you want to delete "${itemName}" from the menu?`)) {
+      deleteMenuItem(itemId);
+    }
+  };
+
+  // Handle PIN login
+  const handleLogin = (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoginError('');
+    const ok = loginAdmin(pinInput);
+    if (!ok) {
+      setLoginError('Incorrect PIN or Password. Use "mozz8888" or "admin123"');
+    } else {
+      setPinInput('');
+    }
+  };
+
+  // Quick PIN button helper
+  const handleQuickPin = (digit: string) => {
+    if (pinInput.length < 8) {
+      setPinInput((prev) => prev + digit);
+    }
+  };
+
+  // If not authenticated, render secure login card
+  if (!isAdminAuthenticated) {
+    return (
+      <div className="max-w-md mx-auto py-12 px-4">
+        <div className="bg-white border border-slate-200 rounded-3xl p-6 sm:p-8 shadow-xl text-center space-y-6">
+          <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-rose-500 to-amber-500 p-0.5 mx-auto shadow-md">
+            <div className="w-full h-full bg-white rounded-[14px] flex items-center justify-center text-rose-600">
+              <Lock className="w-8 h-8" />
+            </div>
+          </div>
+
+          <div>
+            <h2 className="text-xl font-black text-slate-900">Restaurant Admin Portal</h2>
+            <p className="text-xs text-slate-500 mt-1">
+              Authorized MOZZ Pizzateria staff access only. Manage live orders, KDS, inventory & sales.
+            </p>
+          </div>
+
+          <form onSubmit={handleLogin} className="space-y-4">
+            <div>
+              <input
+                type="password"
+                value={pinInput}
+                onChange={(e) => setPinInput(e.target.value)}
+                placeholder="Enter Admin PIN / Password"
+                className="w-full text-center tracking-widest text-lg font-mono bg-slate-50 border border-slate-200 rounded-2xl px-4 py-3 text-rose-600 placeholder-slate-400 focus:outline-none focus:border-rose-500"
+              />
+            </div>
+
+            {/* Quick Numeric Keypad */}
+            <div className="grid grid-cols-3 gap-2 max-w-xs mx-auto">
+              {['1', '2', '3', '4', '5', '6', '7', '8', '9', 'C', '0', '⌫'].map((k) => (
+                <button
+                  key={k}
+                  type="button"
+                  onClick={() => {
+                    if (k === 'C') setPinInput('');
+                    else if (k === '⌫') setPinInput((p) => p.slice(0, -1));
+                    else handleQuickPin(k);
+                  }}
+                  className="py-3 rounded-xl bg-slate-50 border border-slate-200 hover:bg-slate-100 text-slate-700 font-bold text-sm transition active:scale-95 shadow-2xs"
+                >
+                  {k}
+                </button>
+              ))}
+            </div>
+
+            {loginError && (
+              <div className="p-2.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs font-semibold">
+                {loginError}
+              </div>
+            )}
+
+            <button
+              type="submit"
+              className="w-full py-3.5 rounded-2xl bg-rose-600 hover:bg-rose-700 text-white font-bold text-sm shadow-sm transition"
+            >
+              Unlock Restaurant Portal
+            </button>
+          </form>
+
+          <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 text-[11px] text-slate-500">
+            <span>Default Staff PIN: </span>
+            <button
+              type="button"
+              onClick={() => {
+                setPinInput('mozz8888');
+              }}
+              className="text-rose-600 font-mono font-bold hover:underline"
+            >
+              mozz8888
+            </button>
+            <span className="text-slate-400"> (Click to autofill)</span>
+          </div>
+
+          <button
+            onClick={onBackToMenu}
+            className="text-xs text-slate-500 hover:text-slate-800 transition"
+          >
+            ← Back to Customer Menu
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // Filtered orders
+  const filteredOrders = orders.filter((o) => {
+    if (orderStatusFilter === 'all') return true;
+    return o.status === orderStatusFilter;
+  });
+
+  // Calculate quick analytics
+  const totalRevenue = orders.reduce((sum, o) => sum + (o.paymentStatus === 'paid' ? o.grandTotal : 0), 0);
+  const totalOrdersCount = orders.length;
+  const activeOrdersCount = orders.filter((o) => o.status !== 'delivered' && o.status !== 'cancelled').length;
+
+  return (
+    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6">
+      {/* Admin Header Bar */}
+      <div className="bg-white border border-slate-200 rounded-3xl p-5 sm:p-6 flex flex-col sm:flex-row items-center justify-between gap-4 shadow-sm">
+        <div className="flex items-center gap-3">
+          <div className="w-12 h-12 rounded-2xl bg-rose-600 text-white flex items-center justify-center font-black text-xl shadow-xs">
+            🥟
+          </div>
+          <div>
+            <div className="flex items-center gap-2">
+              <h1 className="text-xl font-black text-slate-900">MOZZ Restaurant Manager</h1>
+              <span className="px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 text-[10px] font-bold">
+                KITCHEN ONLINE
+              </span>
+            </div>
+            <p className="text-xs text-slate-500">
+              Live POS Dashboard • Korean Pocket Pizzas & Chinese Delicacies
+            </p>
+          </div>
+        </div>
+
+        {/* Tab Controls & Logout */}
+        <div className="flex items-center flex-wrap gap-2">
+          <div className="bg-slate-100 p-1 rounded-2xl border border-slate-200 flex gap-1 text-xs font-bold">
+            <button
+              onClick={() => setAdminTab('orders')}
+              className={`px-3.5 py-2 rounded-xl transition ${
+                adminTab === 'orders'
+                  ? 'bg-rose-600 text-white shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              Live Orders ({activeOrdersCount})
+            </button>
+            <button
+              onClick={() => setAdminTab('calendar')}
+              className={`px-3.5 py-2 rounded-xl transition flex items-center gap-1.5 ${
+                adminTab === 'calendar'
+                  ? 'bg-rose-600 text-white shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <Calendar className="w-3.5 h-3.5" />
+              <span>Calendar</span>
+            </button>
+            <button
+              onClick={() => setAdminTab('menu_stock')}
+              className={`px-3.5 py-2 rounded-xl transition ${
+                adminTab === 'menu_stock'
+                  ? 'bg-rose-600 text-white shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              Menu & Stock
+            </button>
+            <button
+              onClick={() => setAdminTab('printers')}
+              className={`px-3.5 py-2 rounded-xl transition flex items-center gap-1.5 ${
+                adminTab === 'printers'
+                  ? 'bg-rose-600 text-white shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <Printer className="w-3.5 h-3.5" />
+              <span>KOT & Printers</span>
+            </button>
+            <button
+              onClick={() => setAdminTab('analytics')}
+              className={`px-3.5 py-2 rounded-xl transition ${
+                adminTab === 'analytics'
+                  ? 'bg-rose-600 text-white shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              Sales Analytics
+            </button>
+          </div>
+
+          <button
+            onClick={toggleSound}
+            className="p-2 rounded-xl bg-slate-100 text-slate-600 hover:text-slate-900 border border-slate-200 transition"
+            title={soundEnabled ? 'Kitchen Bell Chime ON' : 'Muted'}
+          >
+            {soundEnabled ? <Volume2 className="w-4 h-4 text-rose-600" /> : <VolumeX className="w-4 h-4 text-slate-400" />}
+          </button>
+
+          <button
+            onClick={logoutAdmin}
+            className="p-2 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 transition"
+            title="Lock & Logout Admin"
+          >
+            <LogOut className="w-4 h-4" />
+          </button>
+        </div>
+      </div>
+
+      {/* ================= TAB 1: LIVE ORDERS / KDS ================= */}
+      {adminTab === 'orders' && (
+        <div className="space-y-5">
+          {/* Order Status Filters */}
+          <div className="flex items-center justify-between flex-wrap gap-2">
+            <div className="flex items-center gap-1.5 overflow-x-auto pb-1 text-xs">
+              {[
+                { id: 'all', label: 'All Orders' },
+                { id: 'placed', label: 'New Placed 🔔' },
+                { id: 'baking', label: 'In Kitchen / Oven 🔥' },
+                { id: 'packing', label: 'Packing 📦' },
+                { id: 'out_for_delivery', label: 'Out for Delivery 🛵' },
+                { id: 'delivered', label: 'Completed ✅' },
+              ].map((f) => (
+                <button
+                  key={f.id}
+                  onClick={() => setOrderStatusFilter(f.id)}
+                  className={`px-3 py-1.5 rounded-xl font-bold transition whitespace-nowrap ${
+                    orderStatusFilter === f.id
+                      ? 'bg-rose-600 text-white shadow-xs'
+                      : 'bg-white text-slate-600 hover:bg-slate-50 border border-slate-200'
+                  }`}
+                >
+                  {f.label}
+                </button>
+              ))}
+            </div>
+
+            <div className="text-xs text-slate-500 font-medium">
+              Showing {filteredOrders.length} order{filteredOrders.length === 1 ? '' : 's'}
+            </div>
+          </div>
+
+          {/* Orders Grid */}
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {filteredOrders.length === 0 ? (
+              <div className="col-span-full py-16 text-center bg-white border border-slate-200 rounded-3xl shadow-sm">
+                <div className="text-3xl mb-2">📋</div>
+                <h3 className="text-base font-bold text-slate-800">No Orders in this Status</h3>
+                <p className="text-xs text-slate-500 mt-1">
+                  New orders will automatically ring the kitchen bell chime and populate here.
+                </p>
+              </div>
+            ) : (
+              filteredOrders.map((ord) => {
+                return (
+                  <div
+                    key={ord.id}
+                    className="bg-white border border-slate-200 rounded-3xl p-5 flex flex-col justify-between space-y-4 shadow-sm hover:border-slate-300 transition"
+                  >
+                    {/* Header: Order ID & Status */}
+                    <div>
+                      <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+                        <div>
+                          <span className="text-base font-black text-rose-600 font-mono">
+                            #{ord.id}
+                          </span>
+                          <div className="text-[10px] text-slate-400">
+                            {new Date(ord.createdAt).toLocaleTimeString([], {
+                              hour: '2-digit',
+                              minute: '2-digit',
+                            })}
+                          </div>
+                        </div>
+
+                        <div className="text-right">
+                          <span
+                            className={`px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider ${
+                              ord.status === 'delivered'
+                                ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                                : ord.status === 'baking'
+                                ? 'bg-amber-50 text-amber-700 border border-amber-200 animate-pulse'
+                                : ord.status === 'out_for_delivery'
+                                ? 'bg-blue-50 text-blue-700 border border-blue-200'
+                                : 'bg-rose-50 text-rose-700 border border-rose-200'
+                            }`}
+                          >
+                            {ord.status.replace(/_/g, ' ')}
+                          </span>
+                          <div className="text-[10px] font-bold text-slate-600 mt-1 capitalize">
+                            {ord.orderType.replace('_', ' ')}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Customer info & KOT Tag */}
+                      <div className="mt-3 bg-slate-50 p-2.5 rounded-xl border border-slate-100 text-xs space-y-1.5">
+                        <div className="flex justify-between items-center">
+                          <div className="font-bold text-slate-800">
+                            {ord.customer.name} • <span className="text-rose-600">{ord.customer.phone}</span>
+                          </div>
+                          {ord.kotNumber && (
+                            <span className="px-2 py-0.5 rounded-md bg-amber-100 text-amber-900 border border-amber-300 font-mono font-black text-[10px]">
+                              {ord.kotNumber}
+                            </span>
+                          )}
+                        </div>
+
+                        {ord.customer.address && (
+                          <div className="text-[11px] text-slate-500 truncate">
+                            {ord.customer.address}
+                          </div>
+                        )}
+
+                        <div className="flex items-center justify-between pt-1 border-t border-slate-200/60 text-[11px]">
+                          {ord.customer.tableNumber || ord.orderType === 'dine_in' ? (
+                            <div className="text-rose-700 font-black flex items-center gap-1">
+                              <span>🪑 Dine-In Table:</span>
+                              <span className="underline">{ord.customer.tableNumber || 'Table 1'}</span>
+                            </div>
+                          ) : (
+                            <div className="text-slate-500 capitalize">{ord.orderType} Delivery</div>
+                          )}
+
+                          <div className="text-[10px] font-bold text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200">
+                            Station: {ord.kotStation || 'All Stations'}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Items List (Clear for Kitchen Chefs) */}
+                      <div className="mt-3 space-y-2">
+                        <div className="text-[10px] font-black uppercase tracking-wider text-slate-400">
+                          Items to Prepare:
+                        </div>
+                        {ord.items.map((it, idx) => (
+                          <div key={idx} className="bg-slate-50/70 p-2.5 rounded-xl border border-slate-100 text-xs">
+                            <div className="flex items-center justify-between font-bold text-slate-800">
+                              <span>
+                                {it.quantity}x {it.menuItem.name}
+                              </span>
+                              <span className="text-rose-600">₹{it.unitPrice * it.quantity}</span>
+                            </div>
+
+                            {/* Shape & customizer pill */}
+                            <div className="flex flex-wrap gap-1 mt-1">
+                              {it.selectedShape && (
+                                <span className="text-[10px] font-black bg-rose-50 text-rose-700 px-2 py-0.5 rounded border border-rose-200">
+                                  SHAPE: [{it.selectedShape}]{' '}
+                                  {it.selectedShape === 'R'
+                                    ? 'Rectangular'
+                                    : it.selectedShape === 'C'
+                                    ? 'Circular'
+                                    : 'Square'}
+                                </span>
+                              )}
+                              {it.selectedCrust && (
+                                <span className="text-[10px] text-slate-600 bg-slate-200/80 px-1.5 py-0.5 rounded">
+                                  {it.selectedCrust}
+                                </span>
+                              )}
+                              {it.spiceLevel && (
+                                <span className="text-[10px] text-rose-700 bg-rose-50 px-1.5 py-0.5 rounded border border-rose-100">
+                                  {it.spiceLevel}
+                                </span>
+                              )}
+                            </div>
+
+                            {it.specialInstructions && (
+                              <div className="text-[10px] text-amber-700 font-semibold mt-1">
+                                ⚠️ Note: "{it.specialInstructions}"
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Footer Actions: Status Transition Buttons */}
+                    <div className="pt-3 border-t border-slate-100 space-y-2">
+                      <div className="flex justify-between items-center text-xs">
+                        <span className="text-slate-500">Total Bill:</span>
+                        <span className="font-black text-rose-600 text-sm">₹{ord.grandTotal.toFixed(2)}</span>
+                      </div>
+
+                      {/* Print Ticket & Receipt Controls */}
+                      <div className="grid grid-cols-2 gap-2 pt-1">
+                        <button
+                          type="button"
+                          onClick={() => setPrintModalData({ order: ord, type: 'kot' })}
+                          className="py-1.5 px-2 rounded-xl bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200 text-xs font-bold transition flex items-center justify-center gap-1.5"
+                        >
+                          <ChefHat className="w-3.5 h-3.5 text-amber-700" />
+                          <span>Print KOT Slip</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setPrintModalData({ order: ord, type: 'receipt' })}
+                          className="py-1.5 px-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 border border-slate-200 text-xs font-bold transition flex items-center justify-center gap-1.5"
+                        >
+                          <Printer className="w-3.5 h-3.5 text-slate-600" />
+                          <span>Print Bill / Receipt</span>
+                        </button>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-2">
+                        {ord.status === 'placed' && (
+                          <button
+                            onClick={() => updateOrderStatus(ord.id, 'baking', 'Kitchen started preparing')}
+                            className="col-span-2 py-2 px-3 rounded-xl bg-amber-500 hover:bg-amber-600 text-white font-bold text-xs shadow-xs transition"
+                          >
+                            Accept & Start Baking 🔥
+                          </button>
+                        )}
+
+                        {ord.status === 'baking' && (
+                          <button
+                            onClick={() => updateOrderStatus(ord.id, 'packing', 'Items baked, packing in box')}
+                            className="col-span-2 py-2 px-3 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs shadow-xs transition"
+                          >
+                            Mark Ready & Pack 📦
+                          </button>
+                        )}
+
+                        {ord.status === 'packing' && (
+                          <button
+                            onClick={() => updateOrderStatus(ord.id, 'out_for_delivery', 'Handed to delivery rider')}
+                            className="col-span-2 py-2 px-3 rounded-xl bg-purple-600 hover:bg-purple-700 text-white font-bold text-xs shadow-xs transition"
+                          >
+                            Dispatch / Hand to Rider 🛵
+                          </button>
+                        )}
+
+                        {ord.status === 'out_for_delivery' && (
+                          <button
+                            onClick={() => updateOrderStatus(ord.id, 'delivered', 'Order successfully delivered')}
+                            className="col-span-2 py-2 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shadow-xs transition"
+                          >
+                            Mark Order Delivered ✅
+                          </button>
+                        )}
+
+                        {ord.status === 'delivered' && (
+                          <div className="col-span-2 py-1.5 text-center text-xs font-bold text-emerald-700 bg-emerald-50 rounded-xl border border-emerald-200">
+                            Order Completed & Settled
+                          </div>
+                        )}
+
+                        {ord.status !== 'delivered' && ord.status !== 'cancelled' && (
+                          <button
+                            onClick={() => {
+                              if (window.confirm(`Are you sure you want to cancel Order #${ord.id}?`)) {
+                                cancelOrder(ord.id, 'Cancelled by Admin / Wrongly placed');
+                              }
+                            }}
+                            className="col-span-2 py-1.5 px-3 rounded-xl bg-slate-50 hover:bg-rose-50 text-slate-500 hover:text-rose-600 border border-slate-200 hover:border-rose-200 text-[11px] font-semibold transition"
+                          >
+                            Cancel Wrongly Placed Order ✕
+                          </button>
+                        )}
+
+                        {ord.status === 'cancelled' && (
+                          <div className="col-span-2 py-1.5 text-center text-xs font-bold text-rose-700 bg-rose-50 rounded-xl border border-rose-200">
+                            Order Cancelled ✕
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ================= TAB: ORDER CALENDAR & DATE FILTER ================= */}
+      {adminTab === 'calendar' && (
+        <OrderCalendarView
+          orders={orders}
+          onSelectOrder={(ord) => {
+            setOrderStatusFilter('all');
+            setAdminTab('orders');
+          }}
+          onPrintKOT={(ord) => setPrintModalData({ order: ord, type: 'kot' })}
+          onPrintBill={(ord) => setPrintModalData({ order: ord, type: 'receipt' })}
+        />
+      )}
+
+      {/* ================= TAB 2: MENU & INVENTORY STOCK ================= */}
+      {adminTab === 'menu_stock' && (
+        <div className="bg-white border border-slate-200 rounded-3xl p-5 sm:p-6 shadow-sm space-y-5">
+          <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
+            <div>
+              <h2 className="text-lg font-bold text-slate-900">Menu Items & Inventory Catalog</h2>
+              <p className="text-xs text-slate-500">
+                Add new dishes, update prices, edit details, toggle stock availability, or delete items.
+              </p>
+            </div>
+
+            <div className="flex flex-wrap gap-2 w-full sm:w-auto">
+              <button
+                onClick={openAddItemModal}
+                className="px-3.5 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold shadow-xs transition flex items-center gap-1.5"
+              >
+                <Plus className="w-4 h-4" />
+                <span>Add New Item</span>
+              </button>
+
+              <input
+                type="text"
+                value={menuSearch}
+                onChange={(e) => setMenuSearch(e.target.value)}
+                placeholder="Search menu items..."
+                className="bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2 text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:border-rose-500 w-full sm:w-52"
+              />
+
+              <button
+                onClick={resetMenuToDefault}
+                className="px-3 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold border border-slate-200 transition flex items-center gap-1"
+                title="Reset prices & items to original menu card"
+              >
+                <RotateCcw className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">Reset</span>
+              </button>
+            </div>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs border-collapse">
+              <thead>
+                <tr className="border-b border-slate-200 text-slate-500 uppercase tracking-wider font-bold">
+                  <th className="py-3 px-3">Item Name</th>
+                  <th className="py-3 px-3">Category</th>
+                  <th className="py-3 px-3">Type</th>
+                  <th className="py-3 px-3">Prices (R / C / S or Base)</th>
+                  <th className="py-3 px-3">Stock Status</th>
+                  <th className="py-3 px-3 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {menu
+                  .filter((m) => m.name.toLowerCase().includes(menuSearch.toLowerCase()))
+                  .map((item) => (
+                    <tr key={item.id} className="hover:bg-slate-50/70 transition">
+                      <td className="py-3 px-3 font-bold text-slate-900">
+                        <div className="flex items-center gap-2.5">
+                          <img
+                            src={item.image || 'https://images.unsplash.com/photo-1513104890138-7c749659a591?w=100'}
+                            alt={item.name}
+                            className="w-8 h-8 rounded-lg object-cover border border-slate-200 shrink-0"
+                          />
+                          <div>
+                            <div className="flex items-center gap-1.5">
+                              <span>{item.name}</span>
+                              {item.isPocketPizza && (
+                                <span className="text-[9px] px-1.5 py-0.2 rounded bg-rose-50 text-rose-700 border border-rose-200 font-bold">
+                                  POCKET PIZZA
+                                </span>
+                              )}
+                              {item.badge && (
+                                <span className="text-[9px] px-1.5 py-0.2 rounded bg-amber-50 text-amber-700 border border-amber-200 font-semibold">
+                                  {item.badge}
+                                </span>
+                              )}
+                            </div>
+                            <div className="text-[10px] text-slate-400 font-normal line-clamp-1 max-w-xs">
+                              {item.description}
+                            </div>
+                          </div>
+                        </div>
+                      </td>
+                      <td className="py-3 px-3 text-slate-600 capitalize">
+                        {item.category.replace(/_/g, ' ')}
+                      </td>
+                      <td className="py-3 px-3 capitalize">
+                        <span
+                          className={`font-semibold ${
+                            item.dietary === 'veg'
+                              ? 'text-emerald-600'
+                              : item.dietary === 'non-veg'
+                              ? 'text-rose-600'
+                              : 'text-amber-600'
+                          }`}
+                        >
+                          {item.dietary}
+                        </span>
+                      </td>
+                      <td className="py-3 px-3 text-rose-600 font-mono font-bold">
+                        {item.isPocketPizza && item.prices ? (
+                          <div className="text-[11px]">
+                            <span>R: ₹{item.prices.R}</span> · <span>C: ₹{item.prices.C}</span> · <span>S: ₹{item.prices.S}</span>
+                          </div>
+                        ) : (
+                          <span className="text-sm">₹{item.price}</span>
+                        )}
+                      </td>
+                      <td className="py-3 px-3">
+                        <button
+                          onClick={() => toggleItemStock(item.id)}
+                          className={`px-2.5 py-1 rounded-xl text-xs font-bold transition ${
+                            item.inStock
+                              ? 'bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100'
+                              : 'bg-rose-50 text-rose-700 border border-rose-200 hover:bg-rose-100'
+                          }`}
+                        >
+                          {item.inStock ? 'In Stock' : 'Sold Out'}
+                        </button>
+                      </td>
+                      <td className="py-3 px-3 text-right">
+                        <div className="flex items-center justify-end gap-1.5">
+                          <button
+                            onClick={() => openEditItemModal(item)}
+                            className="p-1.5 rounded-lg bg-slate-100 hover:bg-rose-50 hover:text-rose-600 text-slate-600 transition"
+                            title="Edit Item"
+                          >
+                            <Edit2 className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            onClick={() => handleDeleteItem(item.id, item.name)}
+                            className="p-1.5 rounded-lg bg-slate-100 hover:bg-rose-100 hover:text-rose-700 text-slate-500 transition"
+                            title="Delete Item"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* ================= ADD / EDIT ITEM MODAL ================= */}
+      {isItemModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
+          <div className="bg-white rounded-3xl border border-slate-200 shadow-2xl max-w-lg w-full overflow-hidden max-h-[90vh] flex flex-col">
+            {/* Header */}
+            <div className="p-5 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-xl bg-rose-100 text-rose-600 flex items-center justify-center font-bold">
+                  {editingItem ? <Edit2 className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
+                </div>
+                <div>
+                  <h3 className="font-bold text-slate-900 text-sm">
+                    {editingItem ? `Edit Menu Item: ${editingItem.name}` : 'Add New Dish to Menu'}
+                  </h3>
+                  <p className="text-[11px] text-slate-500">Changes reflect in real-time across customer app</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setIsItemModalOpen(false)}
+                className="p-1.5 rounded-full hover:bg-slate-200 text-slate-500 transition"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Form Body */}
+            <form onSubmit={handleSaveItem} className="p-5 space-y-4 overflow-y-auto flex-1 text-xs">
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">Item / Dish Name *</label>
+                <input
+                  type="text"
+                  required
+                  value={formData.name}
+                  onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                  placeholder="e.g. Korean Chilli Garlic Fried Rice"
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-slate-800 focus:outline-none focus:border-rose-500 font-medium"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Category *</label>
+                  <select
+                    value={formData.category}
+                    onChange={(e) => {
+                      const cat = e.target.value as FoodCategory;
+                      const isPizza = cat === 'pocket_pizza_veg' || cat === 'pocket_pizza_nonveg' || cat === 'dessert_pizza';
+                      setFormData({
+                        ...formData,
+                        category: cat,
+                        isPocketPizza: isPizza,
+                      });
+                    }}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-slate-800 focus:outline-none focus:border-rose-500 font-medium"
+                  >
+                    <option value="pocket_pizza_veg">Pocket Pizza (Veg)</option>
+                    <option value="pocket_pizza_nonveg">Pocket Pizza (Non-Veg)</option>
+                    <option value="dessert_pizza">Dessert Pizza</option>
+                    <option value="chinese_starters">Chinese Starters</option>
+                    <option value="fried_rice">Fried Rice</option>
+                    <option value="noodles">Wok Noodles</option>
+                    <option value="momos">Momos & Dimsums</option>
+                    <option value="maggie">Special Maggie</option>
+                    <option value="drinks">Beverages & Drinks</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Dietary Tag *</label>
+                  <select
+                    value={formData.dietary}
+                    onChange={(e) => setFormData({ ...formData, dietary: e.target.value as DietaryType })}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-slate-800 focus:outline-none focus:border-rose-500 font-medium"
+                  >
+                    <option value="veg">🟢 Pure Veg</option>
+                    <option value="non-veg">🔴 Non-Veg</option>
+                    <option value="egg">🟡 Egg</option>
+                    <option value="dessert">🟣 Dessert / Sweet</option>
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">Description</label>
+                <textarea
+                  rows={2}
+                  value={formData.description}
+                  onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+                  placeholder="Ingredients, taste profile, and preparation style..."
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-slate-800 focus:outline-none focus:border-rose-500 font-medium"
+                />
+              </div>
+
+              {/* Pricing Options */}
+              <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200 space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="font-bold text-slate-800">Is this a Korean Pocket Pizza?</span>
+                  <input
+                    type="checkbox"
+                    checked={formData.isPocketPizza}
+                    onChange={(e) => setFormData({ ...formData, isPocketPizza: e.target.checked })}
+                    className="w-4 h-4 accent-rose-600 rounded"
+                  />
+                </div>
+
+                {formData.isPocketPizza ? (
+                  <div>
+                    <label className="block font-bold text-slate-700 mb-1">Shape-Tier Pricing (₹)</label>
+                    <div className="grid grid-cols-3 gap-2">
+                      <div>
+                        <span className="text-[10px] text-slate-500">[R] Rectangular</span>
+                        <input
+                          type="number"
+                          value={formData.priceR}
+                          onChange={(e) => setFormData({ ...formData, priceR: Number(e.target.value) })}
+                          className="w-full bg-white border border-slate-200 rounded-lg px-2 py-1.5 font-mono font-bold text-slate-800"
+                        />
+                      </div>
+                      <div>
+                        <span className="text-[10px] text-rose-600 font-semibold">[C] Circular</span>
+                        <input
+                          type="number"
+                          value={formData.priceC}
+                          onChange={(e) => setFormData({ ...formData, priceC: Number(e.target.value) })}
+                          className="w-full bg-white border border-slate-200 rounded-lg px-2 py-1.5 font-mono font-bold text-slate-800"
+                        />
+                      </div>
+                      <div>
+                        <span className="text-[10px] text-slate-500">[S] Square</span>
+                        <input
+                          type="number"
+                          value={formData.priceS}
+                          onChange={(e) => setFormData({ ...formData, priceS: Number(e.target.value) })}
+                          className="w-full bg-white border border-slate-200 rounded-lg px-2 py-1.5 font-mono font-bold text-slate-800"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div>
+                    <label className="block font-bold text-slate-700 mb-1">Price (₹) *</label>
+                    <input
+                      type="number"
+                      required
+                      value={formData.price}
+                      onChange={(e) => setFormData({ ...formData, price: Number(e.target.value) })}
+                      placeholder="149"
+                      className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 font-mono font-bold text-slate-800"
+                    />
+                  </div>
+                )}
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Image URL</label>
+                  <input
+                    type="url"
+                    value={formData.image}
+                    onChange={(e) => setFormData({ ...formData, image: e.target.value })}
+                    placeholder="https://..."
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-slate-800 focus:outline-none focus:border-rose-500 font-medium"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Badge (Optional)</label>
+                  <input
+                    type="text"
+                    value={formData.badge}
+                    onChange={(e) => setFormData({ ...formData, badge: e.target.value })}
+                    placeholder="e.g. MUST TRY or NEW"
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-slate-800 focus:outline-none focus:border-rose-500 font-medium"
+                  />
+                </div>
+              </div>
+
+              {/* Submit Button */}
+              <div className="pt-2">
+                <button
+                  type="submit"
+                  className="w-full py-2.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-bold shadow-xs transition text-xs"
+                >
+                  {editingItem ? 'Save Item Changes' : 'Add Item to Menu'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ================= TAB 3: RESTAURANT ANALYTICS ================= */}
+      {adminTab === 'analytics' && (
+        <div className="space-y-6">
+          {/* Stat Cards */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="bg-white border border-slate-200 rounded-3xl p-5 shadow-sm">
+              <div className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1">
+                Total Gross Revenue
+              </div>
+              <div className="text-2xl sm:text-3xl font-black text-rose-600 font-mono">
+                ₹{totalRevenue.toFixed(2)}
+              </div>
+              <div className="text-[11px] text-emerald-600 font-semibold mt-1">
+                ↑ 18.5% vs yesterday
+              </div>
+            </div>
+
+            <div className="bg-white border border-slate-200 rounded-3xl p-5 shadow-sm">
+              <div className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1">
+                Total Orders Placed
+              </div>
+              <div className="text-2xl sm:text-3xl font-black text-slate-900">
+                {totalOrdersCount}
+              </div>
+              <div className="text-[11px] text-slate-500 mt-1">
+                {activeOrdersCount} in kitchen / delivery
+              </div>
+            </div>
+
+            <div className="bg-white border border-slate-200 rounded-3xl p-5 shadow-sm">
+              <div className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1">
+                Average Order Value (AOV)
+              </div>
+              <div className="text-2xl sm:text-3xl font-black text-amber-600 font-mono">
+                ₹{totalOrdersCount > 0 ? (totalRevenue / totalOrdersCount).toFixed(0) : '0'}
+              </div>
+              <div className="text-[11px] text-slate-500 mt-1">High combo adoption</div>
+            </div>
+
+            <div className="bg-white border border-slate-200 rounded-3xl p-5 shadow-sm">
+              <div className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1">
+                Top Pocket Shape
+              </div>
+              <div className="text-2xl sm:text-3xl font-black text-rose-600">
+                [C] Circular
+              </div>
+              <div className="text-[11px] text-slate-500 mt-1">Classic shape favorite (54%)</div>
+            </div>
+          </div>
+
+          {/* Detailed Performance Breakdown */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {/* Category Performance */}
+            <div className="bg-white border border-slate-200 rounded-3xl p-5 sm:p-6 shadow-sm space-y-4">
+              <h3 className="text-sm font-bold uppercase tracking-wider text-rose-600">
+                Category Sales Breakdown
+              </h3>
+              <div className="space-y-3 text-xs">
+                <div>
+                  <div className="flex justify-between font-semibold text-slate-700 mb-1">
+                    <span>Korean Pocket Pizzas (Veg & Non-Veg)</span>
+                    <span className="text-rose-600 font-bold">58% of Sales</span>
+                  </div>
+                  <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden">
+                    <div className="h-full bg-rose-600 rounded-full w-[58%]" />
+                  </div>
+                </div>
+
+                <div>
+                  <div className="flex justify-between font-semibold text-slate-700 mb-1">
+                    <span>Chinese Starters (Manchurian, 65, Chilli)</span>
+                    <span className="text-amber-600 font-bold">24% of Sales</span>
+                  </div>
+                  <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden">
+                    <div className="h-full bg-amber-500 rounded-full w-[24%]" />
+                  </div>
+                </div>
+
+                <div>
+                  <div className="flex justify-between font-semibold text-slate-700 mb-1">
+                    <span>Fried Rice & Wok Noodles</span>
+                    <span className="text-emerald-600 font-bold">12% of Sales</span>
+                  </div>
+                  <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden">
+                    <div className="h-full bg-emerald-500 rounded-full w-[12%]" />
+                  </div>
+                </div>
+
+                <div>
+                  <div className="flex justify-between font-semibold text-slate-700 mb-1">
+                    <span>Dessert Pizzas & Maggie/Momos</span>
+                    <span className="text-purple-600 font-bold">6% of Sales</span>
+                  </div>
+                  <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden">
+                    <div className="h-full bg-purple-500 rounded-full w-[6%]" />
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Shape Popularity Comparison */}
+            <div className="bg-white border border-slate-200 rounded-3xl p-5 sm:p-6 shadow-sm space-y-4">
+              <h3 className="text-sm font-bold uppercase tracking-wider text-rose-600">
+                Korean Pocket Pizza Shapes Preference
+              </h3>
+              <div className="grid grid-cols-3 gap-3 text-center">
+                <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200">
+                  <div className="text-xs font-bold text-slate-700">[R] Rectangular</div>
+                  <div className="text-lg font-black text-slate-900 mt-1">26%</div>
+                  <div className="text-[10px] text-slate-400">Regular Tier</div>
+                </div>
+
+                <div className="p-4 rounded-2xl bg-rose-50 border border-rose-200">
+                  <div className="text-xs font-bold text-rose-700">[C] Circular</div>
+                  <div className="text-lg font-black text-rose-600 mt-1">54%</div>
+                  <div className="text-[10px] text-rose-600/80">Classic (Top)</div>
+                </div>
+
+                <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200">
+                  <div className="text-xs font-bold text-slate-700">[S] Square</div>
+                  <div className="text-lg font-black text-slate-900 mt-1">20%</div>
+                  <div className="text-[10px] text-slate-400">Signature Tier</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* ================= TAB 3: KOT & PRINTER MANAGEMENT ================= */}
+      {adminTab === 'printers' && (
+        <div className="space-y-6">
+          {/* Header Card */}
+          <div className="bg-white border border-slate-200 rounded-3xl p-5 sm:p-6 shadow-sm flex flex-col sm:flex-row items-center justify-between gap-4">
+            <div>
+              <div className="flex items-center gap-2">
+                <h2 className="text-lg font-bold text-slate-900">Thermal Printer & KOT Station Hub</h2>
+                <span className="px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 text-xs font-bold flex items-center gap-1">
+                  <Wifi className="w-3 h-3 text-emerald-600 animate-pulse" />
+                  <span>Printers Online</span>
+                </span>
+              </div>
+              <p className="text-xs text-slate-500 mt-1">
+                Configure auto-dispatch for Kitchen Order Tickets (KOT) on dine-in orders and manage thermal billing printers (80mm / 58mm).
+              </p>
+            </div>
+
+            <div className="flex items-center gap-2">
+              {orders.length > 0 && (
+                <button
+                  onClick={() => setPrintModalData({ order: orders[0], type: 'kot' })}
+                  className="px-3.5 py-2 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold transition flex items-center gap-1.5 shadow-xs"
+                >
+                  <ChefHat className="w-4 h-4" />
+                  <span>Test KOT Print</span>
+                </button>
+              )}
+              {orders.length > 0 && (
+                <button
+                  onClick={() => setPrintModalData({ order: orders[0], type: 'receipt' })}
+                  className="px-3.5 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold transition flex items-center gap-1.5 shadow-xs"
+                >
+                  <Printer className="w-4 h-4" />
+                  <span>Test Bill Print</span>
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Printer Device Grid */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {/* Device 1: Kitchen KOT Printer */}
+            <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-sm space-y-4">
+              <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-2xl bg-amber-50 border border-amber-200 text-amber-700 flex items-center justify-center font-bold">
+                    <ChefHat className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-slate-900 text-sm">Station 1 & 2: Kitchen KOT Printer</h3>
+                    <p className="text-[11px] text-slate-500">Pizza Deck Oven + Chinese Wok Stations</p>
+                  </div>
+                </div>
+                <span className="px-2 py-1 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 text-[10px] font-bold">
+                  READY
+                </span>
+              </div>
+
+              <div className="space-y-3 text-xs">
+                <div>
+                  <label className="block text-slate-600 font-semibold mb-1">Printer IP / Interface Port</label>
+                  <input
+                    type="text"
+                    value={printerSettings.kitchenPrinterIP}
+                    onChange={(e) => setPrinterSettings({ ...printerSettings, kitchenPrinterIP: e.target.value })}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-slate-800 font-mono text-xs focus:outline-none focus:border-amber-500"
+                  />
+                </div>
+
+                <div className="flex items-center justify-between p-3 rounded-2xl bg-slate-50 border border-slate-200">
+                  <div>
+                    <div className="font-bold text-slate-800">Auto-Print KOT on Dine-In Order</div>
+                    <div className="text-[11px] text-slate-500">Sends ticket directly to kitchen when table order placed</div>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={printerSettings.autoPrintKOTOnDineIn}
+                    onChange={(e) => setPrinterSettings({ ...printerSettings, autoPrintKOTOnDineIn: e.target.checked })}
+                    className="w-4 h-4 accent-amber-600 rounded"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-slate-600 font-semibold mb-1">KOT Header Chef Instruction Note</label>
+                  <input
+                    type="text"
+                    value={printerSettings.kotHeaderNote}
+                    onChange={(e) => setPrinterSettings({ ...printerSettings, kotHeaderNote: e.target.value })}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-slate-800 text-xs focus:outline-none focus:border-amber-500"
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Device 2: Front Desk Billing Printer */}
+            <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-sm space-y-4">
+              <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-2xl bg-rose-50 border border-rose-200 text-rose-700 flex items-center justify-center font-bold">
+                    <Printer className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-slate-900 text-sm">Station 3: Cashier Billing Printer</h3>
+                    <p className="text-[11px] text-slate-500">Customer Tax Invoices & Payment Slips</p>
+                  </div>
+                </div>
+                <span className="px-2 py-1 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 text-[10px] font-bold">
+                  ONLINE
+                </span>
+              </div>
+
+              <div className="space-y-3 text-xs">
+                <div>
+                  <label className="block text-slate-600 font-semibold mb-1">Billing Printer IP / USB Port</label>
+                  <input
+                    type="text"
+                    value={printerSettings.billingPrinterIP}
+                    onChange={(e) => setPrinterSettings({ ...printerSettings, billingPrinterIP: e.target.value })}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-slate-800 font-mono text-xs focus:outline-none focus:border-rose-500"
+                  />
+                </div>
+
+                <div className="flex items-center justify-between p-3 rounded-2xl bg-slate-50 border border-slate-200">
+                  <div>
+                    <div className="font-bold text-slate-800">Auto-Print Tax Invoice on Payment</div>
+                    <div className="text-[11px] text-slate-500">Prints customer receipt once UPI / Cash paid</div>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={printerSettings.autoPrintReceiptOnPaid}
+                    onChange={(e) => setPrinterSettings({ ...printerSettings, autoPrintReceiptOnPaid: e.target.checked })}
+                    className="w-4 h-4 accent-rose-600 rounded"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-slate-600 font-semibold mb-1">Thermal Paper Roll Size</label>
+                  <div className="grid grid-cols-2 gap-2">
+                    {(['80mm', '58mm'] as const).map((sz) => (
+                      <button
+                        key={sz}
+                        type="button"
+                        onClick={() => setPrinterSettings({ ...printerSettings, paperWidth: sz })}
+                        className={`py-2 rounded-xl font-bold text-xs border transition ${
+                          printerSettings.paperWidth === sz
+                            ? 'bg-rose-50 border-rose-500 text-rose-700'
+                            : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100'
+                        }`}
+                      >
+                        {sz} (Standard POS Roll)
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Dine-In KOT Dispatch Table */}
+          <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-sm space-y-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="font-bold text-slate-900 text-base">Active Dine-In Kitchen Routing (KOTs)</h3>
+                <p className="text-xs text-slate-500">Live KOT status assigned across Pizza Deck, Chinese Wok, and Beverage Stations.</p>
+              </div>
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs">
+                <thead>
+                  <tr className="border-b border-slate-200 text-slate-500 font-bold">
+                    <th className="pb-2.5">KOT #</th>
+                    <th className="pb-2.5">ORDER ID</th>
+                    <th className="pb-2.5">TABLE / TYPE</th>
+                    <th className="pb-2.5">KITCHEN STATION</th>
+                    <th className="pb-2.5">ITEMS</th>
+                    <th className="pb-2.5">STATUS</th>
+                    <th className="pb-2.5 text-right">ACTION</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 font-medium">
+                  {orders.length === 0 ? (
+                    <tr>
+                      <td colSpan={7} className="py-8 text-center text-slate-400">
+                        No active orders currently waiting for KOT dispatch.
+                      </td>
+                    </tr>
+                  ) : (
+                    orders.map((ord) => (
+                      <tr key={ord.id} className="hover:bg-slate-50/70 transition">
+                        <td className="py-3 font-mono font-black text-amber-700">
+                          {ord.kotNumber || `KOT-${ord.id.replace('MOZZ-', '')}`}
+                        </td>
+                        <td className="py-3 font-mono font-bold text-rose-600">#{ord.id}</td>
+                        <td className="py-3 font-bold text-slate-800">
+                          {ord.customer.tableNumber ? `🪑 ${ord.customer.tableNumber}` : ord.orderType.replace('_', ' ')}
+                        </td>
+                        <td className="py-3">
+                          <span className="px-2 py-0.5 rounded-md bg-amber-50 text-amber-800 border border-amber-200 font-semibold text-[11px]">
+                            {ord.kotStation || 'All Stations'}
+                          </span>
+                        </td>
+                        <td className="py-3 text-slate-600 font-bold">
+                          {ord.items.length} dish{ord.items.length > 1 ? 'es' : ''} ({ord.items.map((i) => `${i.quantity}x ${i.menuItem.name}`).join(', ').slice(0, 30)}...)
+                        </td>
+                        <td className="py-3">
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase bg-slate-100 text-slate-700">
+                            {ord.status.replace(/_/g, ' ')}
+                          </span>
+                        </td>
+                        <td className="py-3 text-right">
+                          <div className="flex items-center justify-end gap-1.5">
+                            <button
+                              onClick={() => setPrintModalData({ order: ord, type: 'kot' })}
+                              className="px-2.5 py-1 rounded-lg bg-amber-600 hover:bg-amber-700 text-white font-bold text-[11px] transition flex items-center gap-1 shadow-2xs"
+                            >
+                              <ChefHat className="w-3 h-3" />
+                              <span>Print KOT</span>
+                            </button>
+                            <button
+                              onClick={() => setPrintModalData({ order: ord, type: 'receipt' })}
+                              className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-900 text-white font-bold text-[11px] transition flex items-center gap-1 shadow-2xs"
+                            >
+                              <Printer className="w-3 h-3" />
+                              <span>Bill</span>
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Print Slip Modal */}
+      {printModalData && (
+        <PrintModal
+          order={printModalData.order}
+          type={printModalData.type}
+          onClose={() => setPrintModalData(null)}
+        />
+      )}
+    </div>
+  );
+};
