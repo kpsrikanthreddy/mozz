@@ -14,6 +14,7 @@ import {
   User,
   ShieldCheck,
   Check,
+  Lock,
 } from 'lucide-react';
 import { OrderType } from '../types';
 import { PROMO_COUPONS } from '../data/menuData';
@@ -42,6 +43,8 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({ onOpenCheckout }) => {
     setOrderType,
     tableNumber,
     setTableNumber,
+    qrSession,
+    isModeLocked,
     customerDetails,
     setCustomerDetails,
     promptCustomerVerification,
@@ -153,43 +156,65 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({ onOpenCheckout }) => {
               </div>
             ) : (
               <>
-                {/* Order Type Toggle */}
-                <div className="bg-slate-50 border border-slate-200 rounded-2xl p-3">
-                  <div className="text-[11px] font-bold uppercase tracking-wider text-slate-600 mb-2">
-                    Order Delivery Mode
-                  </div>
-                  <div className="grid grid-cols-3 gap-1.5">
-                    {(['delivery', 'takeaway', 'dine_in'] as OrderType[]).map((type) => (
-                      <button
-                        key={type}
-                        onClick={() => setOrderType(type)}
-                        className={`py-1.5 px-2 rounded-xl text-xs font-bold text-center capitalize transition flex flex-col items-center ${
-                          orderType === type
-                            ? 'bg-rose-600 text-white shadow-xs'
-                            : 'bg-white text-slate-700 hover:bg-slate-100 border border-slate-200'
-                        }`}
-                      >
-                        <span className="text-sm">
-                          {type === 'delivery' ? '🛵' : type === 'takeaway' ? '🛍️' : '🍽️'}
-                        </span>
-                        <span className="text-[10px] mt-0.5">{type.replace('_', ' ')}</span>
-                      </button>
-                    ))}
-                  </div>
-
-                  {orderType === 'dine_in' && (
-                    <div className="mt-3 pt-2 border-t border-slate-200 flex items-center gap-2">
-                      <span className="text-xs text-slate-600 font-medium">Table:</span>
-                      <input
-                        type="text"
-                        value={tableNumber}
-                        onChange={(e) => setTableNumber(e.target.value)}
-                        placeholder="Table 4"
-                        className="bg-white border border-slate-200 rounded-lg px-2.5 py-1 text-xs text-slate-900 font-bold w-32 focus:outline-none focus:border-rose-500"
-                      />
+                {/* Order Type / Mode */}
+                {isModeLocked ? (
+                  <div className="bg-gradient-to-r from-amber-50/90 via-rose-50/50 to-amber-50/90 border border-amber-200/90 rounded-2xl p-3.5 shadow-xs">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex items-center gap-2.5">
+                        <div className="w-9 h-9 rounded-xl bg-amber-100/80 border border-amber-300 flex items-center justify-center text-base shrink-0 shadow-xs">
+                          {qrSession.source === 'table_qr' ? '🍽️' : '🛍️'}
+                        </div>
+                        <div>
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="font-extrabold text-slate-900 text-sm">
+                              {qrSession.source === 'table_qr'
+                                ? `${tableNumber || qrSession.tableNumber || 'Table 1'} (Dine-In)`
+                                : 'Counter Express (Takeaway)'}
+                            </span>
+                            <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300 flex items-center gap-0.5">
+                              <ShieldCheck className="w-2.5 h-2.5 text-emerald-600" />
+                              QR VERIFIED
+                            </span>
+                          </div>
+                          <p className="text-[11px] text-slate-600 mt-0.5">
+                            {qrSession.source === 'table_qr'
+                              ? 'Order mode locked to your table via scanned QR code.'
+                              : 'Order mode locked to Counter Takeaway via scanned QR code.'}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="p-1 rounded-lg bg-amber-100/60 text-amber-800 border border-amber-200" title="Locked by QR Scan">
+                        <Lock className="w-3.5 h-3.5" />
+                      </div>
                     </div>
-                  )}
-                </div>
+                  </div>
+                ) : (
+                  <div className="bg-slate-50 border border-slate-200 rounded-2xl p-3">
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="text-[11px] font-bold uppercase tracking-wider text-slate-600">
+                        Order Delivery Mode
+                      </div>
+                      <span className="text-[10px] text-slate-400 font-medium">Online Website Access</span>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      {(['delivery', 'takeaway'] as OrderType[]).map((type) => (
+                        <button
+                          key={type}
+                          type="button"
+                          onClick={() => setOrderType(type)}
+                          className={`py-2 px-3 rounded-xl text-xs font-bold text-center capitalize transition flex items-center justify-center gap-2 ${
+                            orderType === type
+                              ? 'bg-rose-600 text-white shadow-xs'
+                              : 'bg-white text-slate-700 hover:bg-slate-100 border border-slate-200'
+                          }`}
+                        >
+                          <span className="text-base">{type === 'delivery' ? '🛵' : '🛍️'}</span>
+                          <span>{type === 'delivery' ? 'Home Delivery' : 'Takeaway Pickup'}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
 
                 {/* Cart Items List */}
                 <div className="space-y-3">

@@ -13,6 +13,7 @@ import {
   CheckCircle2,
   XCircle,
   Eye,
+  Trash2,
 } from 'lucide-react';
 
 interface OrderCalendarViewProps {
@@ -20,6 +21,8 @@ interface OrderCalendarViewProps {
   onSelectOrder: (order: Order) => void;
   onPrintKOT?: (order: Order) => void;
   onPrintBill?: (order: Order) => void;
+  onDeleteOrder?: (orderId: string) => void;
+  onDeleteKOT?: (orderId: string) => void;
 }
 
 export const OrderCalendarView: React.FC<OrderCalendarViewProps> = ({
@@ -27,6 +30,8 @@ export const OrderCalendarView: React.FC<OrderCalendarViewProps> = ({
   onSelectOrder,
   onPrintKOT,
   onPrintBill,
+  onDeleteOrder,
+  onDeleteKOT,
 }) => {
   const [currentDate, setCurrentDate] = useState<Date>(new Date());
   const [selectedDateString, setSelectedDateString] = useState<string>(
@@ -338,11 +343,27 @@ export const OrderCalendarView: React.FC<OrderCalendarViewProps> = ({
                   <div className="flex items-center justify-between border-b border-slate-100 pb-2">
                     <div className="flex items-center gap-2">
                       <span className="font-mono font-black text-rose-600 text-sm">#{ord.id}</span>
-                      {ord.kotNumber && (
-                        <span className="px-1.5 py-0.5 rounded bg-amber-100 text-amber-900 font-mono font-black text-[10px]">
-                          {ord.kotNumber}
-                        </span>
-                      )}
+                      {ord.kotNumber ? (
+                        <div className="flex items-center gap-1">
+                          <span className="px-1.5 py-0.5 rounded bg-amber-100 text-amber-900 font-mono font-black text-[10px]">
+                            {ord.kotNumber}
+                          </span>
+                          {onDeleteKOT && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (window.confirm(`Delete KOT ${ord.kotNumber} for Order #${ord.id}?`)) {
+                                  onDeleteKOT(ord.id);
+                                }
+                              }}
+                              title="Delete / Clear KOT Ticket"
+                              className="p-0.5 rounded hover:bg-rose-100 text-amber-800 hover:text-rose-600 transition"
+                            >
+                              <Trash2 className="w-3 h-3" />
+                            </button>
+                          )}
+                        </div>
+                      ) : null}
                     </div>
 
                     <div className="flex items-center gap-1.5">
@@ -399,9 +420,9 @@ export const OrderCalendarView: React.FC<OrderCalendarViewProps> = ({
                     </div>
                   </div>
 
-                  {/* Actions: Print KOT / Print Bill */}
+                  {/* Actions: Print KOT / Print Bill / Delete Order */}
                   <div className="flex items-center justify-end gap-2 pt-1 border-t border-slate-100">
-                    {onPrintKOT && (
+                    {onPrintKOT && ord.kotNumber && (
                       <button
                         onClick={() => onPrintKOT(ord)}
                         className="py-1 px-2.5 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200 text-[11px] font-bold transition flex items-center gap-1"
@@ -417,6 +438,20 @@ export const OrderCalendarView: React.FC<OrderCalendarViewProps> = ({
                       >
                         <Printer className="w-3 h-3 text-slate-600" />
                         <span>Tax Invoice</span>
+                      </button>
+                    )}
+                    {onDeleteOrder && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (window.confirm(`Permanently delete Order #${ord.id}? This cannot be undone.`)) {
+                            onDeleteOrder(ord.id);
+                          }
+                        }}
+                        className="p-1.5 rounded-lg bg-slate-50 hover:bg-rose-100 text-slate-400 hover:text-rose-600 border border-slate-200 hover:border-rose-200 transition"
+                        title="Delete Order Permanently"
+                      >
+                        <Trash2 className="w-3 h-3" />
                       </button>
                     )}
                   </div>

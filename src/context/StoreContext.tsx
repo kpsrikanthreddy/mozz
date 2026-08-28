@@ -1,7 +1,8 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
-import { MenuItem, CartItem, Order, OrderStatus, OrderType, CustomerDetails, PaymentMethod } from '../types';
+import { MenuItem, CartItem, Order, OrderStatus, OrderType, CustomerDetails, PaymentMethod, QRSessionInfo, EntrySource } from '../types';
 import { INITIAL_MENU, PROMO_COUPONS } from '../data/menuData';
 import { soundService } from '../utils/audio';
+import { resolveEntrySourceFromLocation, verifySignedQRToken, generateSignedQRToken } from '../utils/qrSecurity';
 
 interface StoreContextType {
   menu: MenuItem[];
@@ -16,6 +17,8 @@ interface StoreContextType {
   discountAmount: number;
   orderType: OrderType;
   tableNumber: string;
+  qrSession: QRSessionInfo;
+  isModeLocked: boolean;
   isAdminAuthenticated: boolean;
   soundEnabled: boolean;
   customerDetails: CustomerDetails;
@@ -38,11 +41,17 @@ interface StoreContextType {
   applyCoupon: (code: string) => { success: boolean; message: string };
   removeCoupon: () => void;
   
+  // QR & Entry Session actions
+  switchQRSession: (session: Partial<QRSessionInfo>) => void;
+  clearQRSession: () => void;
+  
   // Order actions
   createOrder: (paymentMethod: PaymentMethod, paymentId?: string) => Promise<Order>;
   updateOrderStatus: (orderId: string, newStatus: OrderStatus, note?: string) => void;
   setActiveOrderId: (orderId: string | null) => void;
   cancelOrder: (orderId: string, reason?: string) => void;
+  deleteOrder: (orderId: string) => void;
+  deleteKot: (orderId: string) => void;
   
   // Admin actions
   loginAdmin: (password: string) => boolean;
@@ -220,6 +229,22 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     }
   });
 
+  // Entry Source & Signed QR Session State
+  const [qrSession, setQrSession] = useState<QRSessionInfo>(() => {
+    if (typeof window !== 'undefined') {
+      return resolveEntrySourceFromLocation(window.location);
+    }
+    return {
+      source: 'online_web',
+      orderMode: 'delivery',
+      isVerified: true,
+      isModeLocked: false,
+      verificationMessage: 'Direct Online Website Access',
+    };
+  });
+
+  const isModeLocked = qrSession.isModeLocked;
+
   // UI Modals & Settings
   const [isCartOpen, setIsCartOpen] = useState(false);
   const [isCustomizerOpen, setIsCustomizerOpen] = useState(false);
@@ -227,9 +252,94 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [isCustomerModalOpen, setIsCustomerModalOpen] = useState(false);
   const [pendingCustomerAction, setPendingCustomerAction] = useState<(() => void) | null>(null);
   const [appliedCoupon, setAppliedCoupon] = useState<string | null>(null);
-  const [orderType, setOrderType] = useState<OrderType>('delivery');
-  const [tableNumber, setTableNumber] = useState('Table 1');
+  const [orderType, setOrderTypeState] = useState<OrderType>(() => qrSession.orderMode || 'delivery');
+  const [tableNumber, setTableNumberState] = useState<string>(() => qrSession.tableNumber || 'Table 1');
   const [soundEnabled, setSoundEnabled] = useState(true);
+
+  // Auto-validate with backend on load if token present
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const searchParams = new URLSearchParams(window.location.search);
+      const token = searchParams.get('token') || searchParams.get('t');
+      if (token) {
+        fetch(`/api/qr/validate?token=${encodeURIComponent(token)}`)
+          .then((res) => res.json())
+          .then((data) => {
+            if (data.valid) {
+              setQrSession({
+                source: data.source,
+                orderMode: data.orderMode,
+                tableNumber: data.tableNumber,
+                token,
+                isVerified: true,
+                isModeLocked: Boolean(data.isModeLocked),
+                verificationMessage: data.message,
+              });
+              setOrderTypeState(data.orderMode);
+              if (data.tableNumber) {
+                setTableNumberState(data.tableNumber);
+              }
+            }
+          })
+          .catch((err) => {
+            console.warn('Server QR validation check:', err);
+          });
+      }
+    }
+  }, []);
+
+  const setOrderType = (type: OrderType) => {
+    if (isModeLocked) {
+      console.warn(`Order mode is locked to ${qrSession.orderMode} (${qrSession.source}) by verified QR scan.`);
+      return;
+    }
+    setOrderTypeState(type);
+  };
+
+  const setTableNumber = (num: string) => {
+    if (isModeLocked && qrSession.tableNumber) {
+      console.warn(`Table number is locked to ${qrSession.tableNumber} by verified QR scan.`);
+      return;
+    }
+    setTableNumberState(num);
+  };
+
+  const switchQRSession = (newSession: Partial<QRSessionInfo>) => {
+    const src = newSession.source || 'table_qr';
+    const mode = newSession.orderMode || (src === 'table_qr' ? 'dine_in' : src === 'counter_qr' ? 'takeaway' : 'delivery');
+    const cleanTable = newSession.tableNumber ? `Table ${newSession.tableNumber.replace(/^Table\s*/i, '')}` : (src === 'table_qr' ? 'Table 1' : undefined);
+
+    const updated: QRSessionInfo = {
+      source: src,
+      orderMode: mode,
+      tableNumber: cleanTable,
+      token: newSession.token,
+      isVerified: newSession.isVerified ?? true,
+      isModeLocked: newSession.isModeLocked ?? (src !== 'online_web'),
+      verificationMessage: newSession.verificationMessage || (src === 'table_qr' ? `Authenticated ${cleanTable} (Dine-In Session)` : src === 'counter_qr' ? 'Authenticated Counter (Takeaway Session)' : 'Online Customer (Home Delivery)'),
+      signature: newSession.signature,
+    };
+
+    setQrSession(updated);
+    setOrderTypeState(updated.orderMode);
+    if (updated.tableNumber) {
+      setTableNumberState(updated.tableNumber);
+    }
+    soundService.playChime('pop');
+  };
+
+  const clearQRSession = () => {
+    const defaultWeb: QRSessionInfo = {
+      source: 'online_web',
+      orderMode: 'delivery',
+      isVerified: true,
+      isModeLocked: false,
+      verificationMessage: 'Direct Online Customer (Home Delivery)',
+    };
+    setQrSession(defaultWeb);
+    setOrderTypeState('delivery');
+    soundService.playChime('pop');
+  };
 
   // Admin Authentication state
   const [isAdminAuthenticated, setIsAdminAuthenticated] = useState<boolean>(() => {
@@ -476,7 +586,12 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       createdAt: new Date().toISOString(),
       items: [...cart],
       orderType,
-      customer: { ...customerDetails },
+      entrySource: qrSession.source,
+      qrSession: { ...qrSession },
+      customer: {
+        ...customerDetails,
+        tableNumber: orderType === 'dine_in' ? (tableNumber || qrSession.tableNumber || 'Table 1') : undefined,
+      },
       status: 'placed',
       paymentMethod,
       paymentStatus: paymentMethod === 'cod' ? 'cod_pending' : 'paid',
@@ -546,6 +661,31 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   const cancelOrder = (orderId: string, reason?: string) => {
     updateOrderStatus(orderId, 'cancelled', reason || 'Order cancelled by user');
+  };
+
+  const deleteOrder = (orderId: string) => {
+    setOrders((prev) => prev.filter((order) => order.id !== orderId));
+    if (activeOrderId === orderId) {
+      setActiveOrderId(null);
+    }
+    soundService.playChime('pop');
+  };
+
+  const deleteKot = (orderId: string) => {
+    setOrders((prev) =>
+      prev.map((order) => {
+        if (order.id === orderId) {
+          const { kotNumber, kotStation, ...rest } = order;
+          return {
+            ...rest,
+            kotNumber: undefined,
+            kotStation: undefined,
+          };
+        }
+        return order;
+      })
+    );
+    soundService.playChime('pop');
   };
 
   // Admin authentication (Default master PIN: mozz8888 or admin123)
@@ -627,6 +767,8 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         discountAmount,
         orderType,
         tableNumber,
+        qrSession,
+        isModeLocked,
         isAdminAuthenticated,
         soundEnabled,
         customerDetails,
@@ -634,6 +776,8 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         isCustomerModalOpen,
         setIsCustomerModalOpen,
         promptCustomerVerification,
+        switchQRSession,
+        clearQRSession,
         setOrderType,
         setTableNumber,
         setCustomerDetails,
@@ -650,6 +794,8 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         updateOrderStatus,
         setActiveOrderId,
         cancelOrder,
+        deleteOrder,
+        deleteKot,
         loginAdmin,
         logoutAdmin,
         toggleItemStock,

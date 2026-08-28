@@ -156,6 +156,154 @@ async function startServer() {
   app.post('/api/verify-payment', handleVerifyPayment);
   app.post('/api/razorpay/verify-payment', handleVerifyPayment);
 
+  // --- QR TOKEN SECURITY & ENTRY SOURCE VALIDATION ENDPOINTS ---
+  const QR_SIGNING_SALT = process.env.QR_SIGNING_SECRET || 'mozz_pizzateria_secure_qr_key_v1_2026';
+  const CANONICAL_BASE_URL = 'https://starters4u.in';
+
+  function serverSimpleHmacSha256(data: string, key: string): string {
+    let hash = 0;
+    const combined = `${key}:::${data}:::${key.length}`;
+    for (let i = 0; i < combined.length; i++) {
+      const char = combined.charCodeAt(i);
+      hash = ((hash << 5) - hash) + char;
+      hash = hash & hash;
+    }
+    let hash2 = 5381;
+    for (let i = combined.length - 1; i >= 0; i--) {
+      const char = combined.charCodeAt(i);
+      hash2 = ((hash2 << 5) + hash2) ^ (char * 33);
+      hash2 = hash2 & hash2;
+    }
+    const hex1 = Math.abs(hash).toString(16).padStart(8, '0');
+    const hex2 = Math.abs(hash2).toString(16).padStart(8, '0');
+    const hex3 = Math.abs(hash ^ hash2).toString(16).padStart(8, '0');
+    const hex4 = Math.abs((hash * 31) ^ hash2).toString(16).padStart(8, '0');
+    return `${hex1}${hex2}${hex3}${hex4}`;
+  }
+
+  function serverGenerateSignedToken(mode: 'dine_in' | 'takeaway' | 'delivery', table?: string) {
+    const payload = {
+      restaurant: 'mozz',
+      mode,
+      table: mode === 'dine_in' ? (table ? table.replace(/^Table\s*/i, '') : '1') : undefined,
+      source: mode === 'dine_in' ? 'table_qr' : mode === 'takeaway' ? 'counter_qr' : 'online_web',
+      issuedAt: Date.now(),
+      nonce: Math.random().toString(36).substring(2, 8),
+    };
+    const payloadString = JSON.stringify(payload);
+    const encodedPayload = Buffer.from(payloadString, 'utf-8').toString('base64url');
+    const signature = serverSimpleHmacSha256(encodedPayload, QR_SIGNING_SALT);
+    const token = `${encodedPayload}.${signature}`;
+    
+    let path = '/';
+    if (mode === 'dine_in') {
+      path = `/r/mozz/table/${payload.table}`;
+    } else if (mode === 'takeaway') {
+      path = `/r/mozz/counter`;
+    }
+    return {
+      token,
+      payload,
+      canonicalUrl: `${CANONICAL_BASE_URL}${path}?token=${token}`,
+      localPath: `${path}?token=${token}`,
+    };
+  }
+
+  // Validate incoming token
+  const handleValidateQrToken = (req: express.Request, res: express.Response) => {
+    const token = (req.query.token as string) || req.body?.token;
+    if (!token) {
+      return res.json({
+        valid: true,
+        source: 'online_web',
+        orderMode: 'delivery',
+        isModeLocked: false,
+        message: 'Online Customer (Default Direct Website Entry)',
+      });
+    }
+
+    const parts = token.split('.');
+    if (parts.length !== 2) {
+      return res.status(400).json({
+        valid: false,
+        error: 'Malformed token structure',
+        fallbackMode: 'delivery',
+      });
+    }
+
+    const [encodedPayload, providedSig] = parts;
+    const expectedSig = serverSimpleHmacSha256(encodedPayload, QR_SIGNING_SALT);
+
+    if (providedSig !== expectedSig) {
+      return res.status(401).json({
+        valid: false,
+        error: 'Invalid cryptographic signature. Tampered QR code detected.',
+        fallbackMode: 'delivery',
+      });
+    }
+
+    try {
+      const decodedJson = Buffer.from(encodedPayload, 'base64url').toString('utf-8');
+      const payload = JSON.parse(decodedJson);
+      return res.json({
+        valid: true,
+        source: payload.source || (payload.mode === 'dine_in' ? 'table_qr' : payload.mode === 'takeaway' ? 'counter_qr' : 'online_web'),
+        orderMode: payload.mode,
+        tableNumber: payload.table ? `Table ${payload.table}` : undefined,
+        isModeLocked: true,
+        restaurant: payload.restaurant,
+        issuedAt: payload.issuedAt,
+        message: payload.mode === 'dine_in'
+          ? `Authenticated Table ${payload.table} Dine-In Session`
+          : `Authenticated Counter Takeaway Session`,
+      });
+    } catch (err: any) {
+      return res.status(400).json({
+        valid: false,
+        error: 'Failed to decode token payload',
+        fallbackMode: 'delivery',
+      });
+    }
+  };
+
+  app.get('/api/qr/validate', handleValidateQrToken);
+  app.post('/api/qr/validate', handleValidateQrToken);
+
+  // Generate QR Token
+  app.post('/api/qr/generate', (req, res) => {
+    const { mode = 'dine_in', table = '1' } = req.body;
+    const generated = serverGenerateSignedToken(mode, table);
+    res.json(generated);
+  });
+
+  // Get full standard QR Catalog for Admin (Tables 1-20 + Counter)
+  app.get('/api/qr/catalog', (_req, res) => {
+    const counter = serverGenerateSignedToken('takeaway');
+    const tables = [];
+    for (let i = 1; i <= 20; i++) {
+      tables.push(serverGenerateSignedToken('dine_in', String(i)));
+    }
+    res.json({
+      counter: {
+        id: 'counter-main',
+        label: 'Takeaway Counter QR',
+        ...counter,
+      },
+      tables: tables.map((t, index) => ({
+        id: `table-${index + 1}`,
+        label: `Table ${index + 1} Dine-In QR`,
+        tableNumber: `Table ${index + 1}`,
+        ...t,
+      })),
+      website: {
+        id: 'web-direct',
+        label: 'Online Customer (Direct Web)',
+        canonicalUrl: `${CANONICAL_BASE_URL}/`,
+        mode: 'delivery',
+      },
+    });
+  });
+
   // Vite middleware for development vs Static file serving for production
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({

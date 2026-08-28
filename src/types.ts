@@ -65,6 +65,19 @@ export type OrderStatus =
 
 export type OrderType = 'delivery' | 'takeaway' | 'dine_in';
 
+export type EntrySource = 'table_qr' | 'counter_qr' | 'online_web';
+
+export interface QRSessionInfo {
+  source: EntrySource;
+  orderMode: OrderType;
+  tableNumber?: string;
+  token?: string;
+  isVerified: boolean;
+  isModeLocked: boolean;
+  verificationMessage?: string;
+  signature?: string;
+}
+
 export type PaymentMethod = 'razorpay' | 'upi_qr' | 'gpay' | 'phonepe' | 'paytm' | 'card' | 'netbanking' | 'cod';
 
 export interface CustomerDetails {
@@ -82,6 +95,8 @@ export interface Order {
   createdAt: string;
   items: CartItem[];
   orderType: OrderType;
+  entrySource?: EntrySource;
+  qrSession?: QRSessionInfo;
   customer: CustomerDetails;
   status: OrderStatus;
   paymentMethod: PaymentMethod;

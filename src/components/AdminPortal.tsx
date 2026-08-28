@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useStore } from '../context/StoreContext';
 import { Order, OrderStatus, MenuItem, FoodCategory, DietaryType } from '../types';
 import {
@@ -31,10 +31,24 @@ import {
   Settings2,
   Check,
   Calendar,
+  QrCode,
+  Copy,
+  ExternalLink,
+  ShieldCheck,
+  Globe,
+  Download,
+  FileImage,
 } from 'lucide-react';
 import { SHAPE_DETAILS } from '../data/menuData';
 import { PrintModal } from './PrintModal';
 import { OrderCalendarView } from './OrderCalendarView';
+import { TableQRGeneratorModal } from './TableQRGeneratorModal';
+import { generateSignedQRToken } from '../utils/qrSecurity';
+import {
+  generateQRDataURL,
+  downloadQRImage,
+  downloadTableStandImage,
+} from '../utils/qrDownloadHelper';
 
 interface AdminPortalProps {
   onBackToMenu: () => void;
@@ -49,6 +63,8 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ onBackToMenu }) => {
     logoutAdmin,
     updateOrderStatus,
     cancelOrder,
+    deleteOrder,
+    deleteKot,
     toggleItemStock,
     updateItemPrice,
     addMenuItem,
@@ -57,13 +73,24 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ onBackToMenu }) => {
     resetMenuToDefault,
     soundEnabled,
     toggleSound,
+    switchQRSession,
+    clearQRSession,
+    qrSession,
   } = useStore();
 
   const [pinInput, setPinInput] = useState('');
   const [loginError, setLoginError] = useState('');
-  const [adminTab, setAdminTab] = useState<'orders' | 'calendar' | 'menu_stock' | 'printers' | 'analytics'>('orders');
+  const [adminTab, setAdminTab] = useState<'orders' | 'calendar' | 'menu_stock' | 'printers' | 'qr_codes' | 'analytics'>('orders');
   const [orderStatusFilter, setOrderStatusFilter] = useState<string>('all');
   const [menuSearch, setMenuSearch] = useState('');
+  const [copiedUrl, setCopiedUrl] = useState<string | null>(null);
+
+  // Table QR Management States
+  const [tableCount, setTableCount] = useState<number>(8);
+  const [showQRDownloadModal, setShowQRDownloadModal] = useState<boolean>(false);
+  const [selectedQRTarget, setSelectedQRTarget] = useState<number | 'counter'>(1);
+  const [batchQRDownloading, setBatchQRDownloading] = useState<boolean>(false);
+  const [batchQRStatus, setBatchQRStatus] = useState<string>('');
 
   // Print Modal State
   const [printModalData, setPrintModalData] = useState<{ order: Order; type: 'kot' | 'receipt' } | null>(null);
@@ -358,6 +385,17 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ onBackToMenu }) => {
               <span>KOT & Printers</span>
             </button>
             <button
+              onClick={() => setAdminTab('qr_codes')}
+              className={`px-3.5 py-2 rounded-xl transition flex items-center gap-1.5 ${
+                adminTab === 'qr_codes'
+                  ? 'bg-rose-600 text-white shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <QrCode className="w-3.5 h-3.5" />
+              <span>QR Tokens & Entry</span>
+            </button>
+            <button
               onClick={() => setAdminTab('analytics')}
               className={`px-3.5 py-2 rounded-xl transition ${
                 adminTab === 'analytics'
@@ -478,10 +516,26 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ onBackToMenu }) => {
                           <div className="font-bold text-slate-800">
                             {ord.customer.name} • <span className="text-rose-600">{ord.customer.phone}</span>
                           </div>
-                          {ord.kotNumber && (
-                            <span className="px-2 py-0.5 rounded-md bg-amber-100 text-amber-900 border border-amber-300 font-mono font-black text-[10px]">
-                              {ord.kotNumber}
-                            </span>
+                          {ord.kotNumber ? (
+                            <div className="flex items-center gap-1">
+                              <span className="px-2 py-0.5 rounded-md bg-amber-100 text-amber-900 border border-amber-300 font-mono font-black text-[10px]">
+                                {ord.kotNumber}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  if (window.confirm(`Delete KOT ${ord.kotNumber} for Order #${ord.id}?`)) {
+                                    deleteKot(ord.id);
+                                  }
+                                }}
+                                title="Delete/Remove KOT ticket"
+                                className="p-1 rounded-md bg-amber-200/70 hover:bg-rose-100 text-amber-800 hover:text-rose-600 transition"
+                              >
+                                <Trash2 className="w-3 h-3" />
+                              </button>
+                            </div>
+                          ) : (
+                            <span className="text-[10px] text-slate-400 font-semibold italic">No Active KOT</span>
                           )}
                         </div>
 
@@ -491,18 +545,35 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ onBackToMenu }) => {
                           </div>
                         )}
 
-                        <div className="flex items-center justify-between pt-1 border-t border-slate-200/60 text-[11px]">
+                        <div className="flex items-center justify-between pt-1 border-t border-slate-200/60 text-[11px] flex-wrap gap-1">
                           {ord.customer.tableNumber || ord.orderType === 'dine_in' ? (
                             <div className="text-rose-700 font-black flex items-center gap-1">
-                              <span>🪑 Dine-In Table:</span>
+                              <span>🪑 Dine-In:</span>
                               <span className="underline">{ord.customer.tableNumber || 'Table 1'}</span>
                             </div>
                           ) : (
                             <div className="text-slate-500 capitalize">{ord.orderType} Delivery</div>
                           )}
 
-                          <div className="text-[10px] font-bold text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200">
-                            Station: {ord.kotStation || 'All Stations'}
+                          <div className="flex items-center gap-1 flex-wrap">
+                            {ord.entrySource === 'table_qr' && (
+                              <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-amber-100 text-amber-900 border border-amber-300">
+                                🍽️ Table QR Signed
+                              </span>
+                            )}
+                            {ord.entrySource === 'counter_qr' && (
+                              <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-blue-100 text-blue-900 border border-blue-300">
+                                🛍️ Counter QR Signed
+                              </span>
+                            )}
+                            {ord.entrySource === 'online_web' && (
+                              <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-slate-100 text-slate-700 border border-slate-200">
+                                🛵 Online Web
+                              </span>
+                            )}
+                            <span className="text-[10px] font-bold text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200">
+                              {ord.kotStation || 'All Stations'}
+                            </span>
                           </div>
                         </div>
                       </div>
@@ -643,6 +714,20 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ onBackToMenu }) => {
                             Order Cancelled ✕
                           </div>
                         )}
+
+                        {/* Delete Order Action */}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (window.confirm(`Permanently delete Order #${ord.id} and its associated records? This cannot be undone.`)) {
+                              deleteOrder(ord.id);
+                            }
+                          }}
+                          className="col-span-2 py-1.5 px-3 rounded-xl bg-slate-50 hover:bg-rose-50 text-slate-400 hover:text-rose-700 border border-slate-200 hover:border-rose-300 text-[11px] font-bold transition flex items-center justify-center gap-1.5"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                          <span>Delete Order Permanently</span>
+                        </button>
                       </div>
                     </div>
                   </div>
@@ -663,6 +748,8 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ onBackToMenu }) => {
           }}
           onPrintKOT={(ord) => setPrintModalData({ order: ord, type: 'kot' })}
           onPrintBill={(ord) => setPrintModalData({ order: ord, type: 'receipt' })}
+          onDeleteOrder={deleteOrder}
+          onDeleteKOT={deleteKot}
         />
       )}
 
@@ -1322,7 +1409,25 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ onBackToMenu }) => {
                     orders.map((ord) => (
                       <tr key={ord.id} className="hover:bg-slate-50/70 transition">
                         <td className="py-3 font-mono font-black text-amber-700">
-                          {ord.kotNumber || `KOT-${ord.id.replace('MOZZ-', '')}`}
+                          {ord.kotNumber ? (
+                            <div className="flex items-center gap-1.5">
+                              <span>{ord.kotNumber}</span>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  if (window.confirm(`Delete KOT ${ord.kotNumber} for Order #${ord.id}?`)) {
+                                    deleteKot(ord.id);
+                                  }
+                                }}
+                                title="Delete / Clear KOT Ticket"
+                                className="p-1 rounded hover:bg-rose-100 text-amber-700 hover:text-rose-600 transition"
+                              >
+                                <Trash2 className="w-3 h-3" />
+                              </button>
+                            </div>
+                          ) : (
+                            <span className="text-slate-400 font-normal italic">Cleared</span>
+                          )}
                         </td>
                         <td className="py-3 font-mono font-bold text-rose-600">#{ord.id}</td>
                         <td className="py-3 font-bold text-slate-800">
@@ -1343,19 +1448,35 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ onBackToMenu }) => {
                         </td>
                         <td className="py-3 text-right">
                           <div className="flex items-center justify-end gap-1.5">
-                            <button
-                              onClick={() => setPrintModalData({ order: ord, type: 'kot' })}
-                              className="px-2.5 py-1 rounded-lg bg-amber-600 hover:bg-amber-700 text-white font-bold text-[11px] transition flex items-center gap-1 shadow-2xs"
-                            >
-                              <ChefHat className="w-3 h-3" />
-                              <span>Print KOT</span>
-                            </button>
+                            {ord.kotNumber && (
+                              <button
+                                onClick={() => setPrintModalData({ order: ord, type: 'kot' })}
+                                className="px-2 py-1 rounded-lg bg-amber-600 hover:bg-amber-700 text-white font-bold text-[11px] transition flex items-center gap-1 shadow-2xs"
+                                title="Print KOT Slip"
+                              >
+                                <ChefHat className="w-3 h-3" />
+                                <span>KOT</span>
+                              </button>
+                            )}
                             <button
                               onClick={() => setPrintModalData({ order: ord, type: 'receipt' })}
-                              className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-900 text-white font-bold text-[11px] transition flex items-center gap-1 shadow-2xs"
+                              className="px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-900 text-white font-bold text-[11px] transition flex items-center gap-1 shadow-2xs"
+                              title="Print Bill / Invoice"
                             >
                               <Printer className="w-3 h-3" />
                               <span>Bill</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (window.confirm(`Permanently delete Order #${ord.id}?`)) {
+                                  deleteOrder(ord.id);
+                                }
+                              }}
+                              className="p-1.5 rounded-lg bg-slate-100 hover:bg-rose-100 text-slate-500 hover:text-rose-600 transition"
+                              title="Delete Order Permanently"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
                             </button>
                           </div>
                         </td>
@@ -1369,6 +1490,374 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ onBackToMenu }) => {
         </div>
       )}
 
+      {/* ================= TAB 5: QR TOKENS, STAND CARDS & DOWNLOADS ================= */}
+      {adminTab === 'qr_codes' && (
+        <div className="space-y-6">
+          {/* Top Banner with Direct Action Buttons */}
+          <div className="bg-gradient-to-r from-slate-900 via-rose-950 to-slate-900 rounded-3xl p-6 text-white shadow-md border border-slate-800">
+            <div className="flex items-start justify-between gap-6 flex-wrap">
+              <div className="space-y-2 max-w-2xl">
+                <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-black bg-amber-400 text-slate-950 shadow-xs">
+                  <ShieldCheck className="w-3.5 h-3.5 text-slate-950" />
+                  <span>TABLE QR CODES & STAND CARD DOWNLOADS</span>
+                </div>
+                <h3 className="text-xl font-extrabold tracking-tight">
+                  Restaurant Table Stands & Counter QR Generator
+                </h3>
+                <p className="text-xs text-slate-300 leading-relaxed">
+                  Download high-resolution QR codes and acrylic tent stand graphics for each dining table.
+                  When customers scan the QR at their table, the session is cryptographically locked to that specific table for direct Kitchen KOT dispatch.
+                </p>
+              </div>
+
+              {/* Action Hub in Header */}
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSelectedQRTarget(1);
+                    setShowQRDownloadModal(true);
+                  }}
+                  className="px-4 py-2.5 rounded-2xl text-xs font-extrabold bg-gradient-to-r from-amber-400 to-rose-400 hover:from-amber-500 hover:to-rose-500 text-slate-950 shadow-md flex items-center justify-center gap-2 transition"
+                >
+                  <FileImage className="w-4 h-4" />
+                  <span>Print & Download Center</span>
+                </button>
+
+                <button
+                  type="button"
+                  disabled={batchQRDownloading}
+                  onClick={async () => {
+                    setBatchQRDownloading(true);
+                    try {
+                      setBatchQRStatus('Downloading Counter Takeaway Stand...');
+                      const counterToken = generateSignedQRToken({ mode: 'takeaway', source: 'counter_qr' });
+                      await downloadTableStandImage(
+                        { identifier: 'Counter Express', qrUrl: counterToken.fullCanonicalUrl },
+                        'Mozz_Stand_Counter_Express.png'
+                      );
+                      await new Promise((r) => setTimeout(r, 600));
+
+                      for (let i = 1; i <= tableCount; i++) {
+                        setBatchQRStatus(`Downloading Table ${i} Stand (${i}/${tableCount})...`);
+                        const tGen = generateSignedQRToken({
+                          mode: 'dine_in',
+                          source: 'table_qr',
+                          tableNumber: `Table ${i}`,
+                        });
+                        await downloadTableStandImage(
+                          { identifier: `Table ${i}`, qrUrl: tGen.fullCanonicalUrl },
+                          `Mozz_Stand_Table_${i}.png`
+                        );
+                        await new Promise((r) => setTimeout(r, 600));
+                      }
+                      setBatchQRStatus('All Table Stand Cards Downloaded Successfully!');
+                      setTimeout(() => {
+                        setBatchQRDownloading(false);
+                        setBatchQRStatus('');
+                      }, 2500);
+                    } catch (err) {
+                      console.error('Batch download failed:', err);
+                      setBatchQRDownloading(false);
+                      setBatchQRStatus('Download interrupted. Check browser permissions.');
+                    }
+                  }}
+                  className="px-4 py-2.5 rounded-2xl text-xs font-bold bg-slate-800 hover:bg-slate-700 text-white border border-slate-700 shadow-sm flex items-center justify-center gap-2 transition disabled:opacity-50"
+                >
+                  <Download className="w-4 h-4 text-amber-400" />
+                  <span>{batchQRDownloading ? 'Downloading...' : 'Batch Download All Stands'}</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Batch Progress Banner */}
+            {batchQRStatus && (
+              <div className="mt-4 pt-3 border-t border-slate-800 flex items-center gap-2 text-xs font-bold text-amber-300">
+                <Sparkles className="w-4 h-4 animate-spin text-amber-400" />
+                <span>{batchQRStatus}</span>
+              </div>
+            )}
+          </div>
+
+          {/* Table Count Selector Bar & Floor Plan Setup */}
+          <div className="bg-white border border-slate-200 rounded-3xl p-5 shadow-xs flex items-center justify-between flex-wrap gap-4">
+            <div>
+              <h4 className="font-extrabold text-slate-900 text-sm flex items-center gap-2">
+                <span>🍽️ Active Dining Tables Floor Layout</span>
+                <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-amber-100 text-amber-900 border border-amber-300">
+                  {tableCount} Tables Configured
+                </span>
+              </h4>
+              <p className="text-xs text-slate-500">
+                Generate and download QR cards for all tables in your dining area.
+              </p>
+            </div>
+
+            <div className="flex items-center gap-3">
+              <span className="text-xs font-semibold text-slate-600">Number of Tables:</span>
+              <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl border border-slate-200">
+                {[4, 8, 10, 12, 16, 20].map((count) => (
+                  <button
+                    key={count}
+                    type="button"
+                    onClick={() => setTableCount(count)}
+                    className={`px-2.5 py-1 rounded-lg text-xs font-bold transition ${
+                      tableCount === count
+                        ? 'bg-rose-600 text-white shadow-xs'
+                        : 'text-slate-700 hover:bg-slate-200'
+                    }`}
+                  >
+                    {count}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {/* Dine-In Table QRs Grid with Real Rendered Barcodes */}
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <h4 className="font-extrabold text-slate-900 text-base">
+                Dine-In Table QR Cards (Tables 1 - {tableCount})
+              </h4>
+              <span className="text-xs text-slate-500 font-medium">
+                Click any table to preview acrylic tent card, download PNG, or copy entry link
+              </span>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+              {Array.from({ length: tableCount }, (_, i) => i + 1).map((tableNum) => {
+                const { token, fullCanonicalUrl } = generateSignedQRToken({
+                  mode: 'dine_in',
+                  source: 'table_qr',
+                  tableNumber: `Table ${tableNum}`,
+                });
+
+                return (
+                  <AdminTableQRCard
+                    key={tableNum}
+                    tableNumber={`Table ${tableNum}`}
+                    tableIndex={tableNum}
+                    fullCanonicalUrl={fullCanonicalUrl}
+                    token={token}
+                    isCounter={false}
+                    copiedUrl={copiedUrl}
+                    onCopy={(url) => {
+                      navigator.clipboard.writeText(url);
+                      setCopiedUrl(url);
+                      setTimeout(() => setCopiedUrl(null), 2500);
+                    }}
+                    onOpenModal={(t) => {
+                      setSelectedQRTarget(t);
+                      setShowQRDownloadModal(true);
+                    }}
+                    onTestScan={() => {
+                      switchQRSession({
+                        source: 'table_qr',
+                        orderMode: 'dine_in',
+                        tableNumber: `Table ${tableNum}`,
+                        token,
+                      });
+                      onBackToMenu();
+                    }}
+                  />
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Counter Express QR & Online Direct Access */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {/* Counter QR Card */}
+            {(() => {
+              const { token: counterToken, fullCanonicalUrl: counterUrl } = generateSignedQRToken({
+                mode: 'takeaway',
+                source: 'counter_qr',
+              });
+
+              return (
+                <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-sm space-y-4 flex flex-col justify-between">
+                  <div>
+                    <div className="flex items-center justify-between mb-2">
+                      <h4 className="font-bold text-slate-900 text-base flex items-center gap-2">
+                        <span>🛍️ Counter Takeaway QR Stand</span>
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-blue-100 text-blue-800 border border-blue-300">
+                          LOCKED TO TAKEAWAY
+                        </span>
+                      </h4>
+                    </div>
+                    <p className="text-xs text-slate-500 mb-4">
+                      Place this acrylic stand at the billing / express takeaway counter. Customers scan to order for self-pickup.
+                    </p>
+
+                    <AdminQRVisualPreview url={counterUrl} label="COUNTER EXPRESS" isCounter={true} />
+                  </div>
+
+                  <div className="space-y-2 pt-2 border-t border-slate-100">
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          await downloadTableStandImage(
+                            { identifier: 'Counter Express', qrUrl: counterUrl },
+                            'Mozz_Stand_Counter_Express.png'
+                          );
+                        }}
+                        className="py-2 px-3 rounded-xl text-xs font-extrabold bg-blue-600 hover:bg-blue-700 text-white shadow-xs flex items-center justify-center gap-1.5 transition"
+                      >
+                        <FileImage className="w-3.5 h-3.5" />
+                        <span>Download Stand PNG</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          await downloadQRImage(counterUrl, 'Mozz_Counter_Takeaway_QR.png', 1024);
+                        }}
+                        className="py-2 px-3 rounded-xl text-xs font-bold bg-slate-100 hover:bg-slate-200 text-slate-800 border border-slate-200 flex items-center justify-center gap-1.5 transition"
+                      >
+                        <Download className="w-3.5 h-3.5" />
+                        <span>Download QR Only</span>
+                      </button>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          navigator.clipboard.writeText(counterUrl);
+                          setCopiedUrl(counterUrl);
+                          setTimeout(() => setCopiedUrl(null), 2500);
+                        }}
+                        className="py-2 px-3 rounded-xl text-xs font-bold bg-white hover:bg-slate-100 text-slate-700 border border-slate-200 flex items-center justify-center gap-1.5 transition"
+                      >
+                        {copiedUrl === counterUrl ? (
+                          <>
+                            <Check className="w-3.5 h-3.5 text-emerald-600" />
+                            <span className="text-emerald-700">Copied</span>
+                          </>
+                        ) : (
+                          <>
+                            <Copy className="w-3.5 h-3.5 text-slate-500" />
+                            <span>Copy Counter URL</span>
+                          </>
+                        )}
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          switchQRSession({
+                            source: 'counter_qr',
+                            orderMode: 'takeaway',
+                            token: counterToken,
+                          });
+                          onBackToMenu();
+                        }}
+                        className="py-2 px-3 rounded-xl text-xs font-bold bg-slate-900 hover:bg-slate-800 text-white flex items-center justify-center gap-1.5 shadow-xs transition"
+                      >
+                        <ExternalLink className="w-3.5 h-3.5" />
+                        <span>Test Scan View</span>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
+
+            {/* Direct Online Customer Card */}
+            {(() => {
+              const onlineUrl = `https://starters4u.in/`;
+
+              return (
+                <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-sm space-y-4 flex flex-col justify-between">
+                  <div>
+                    <div className="flex items-center justify-between mb-2">
+                      <h4 className="font-bold text-slate-900 text-base flex items-center gap-2">
+                        <span>🛵 Online Direct Customers</span>
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-emerald-100 text-emerald-800 border border-emerald-300">
+                          HOME DELIVERY / PICKUP
+                        </span>
+                      </h4>
+                    </div>
+                    <p className="text-xs text-slate-500 mb-4">
+                      Direct organic web traffic visiting the domain without a table/counter QR token. Enables Home Delivery mode with address input.
+                    </p>
+
+                    <div className="flex items-center gap-4 bg-emerald-50/50 p-4 rounded-2xl border border-emerald-200">
+                      <div className="w-20 h-20 bg-slate-950 rounded-xl flex items-center justify-center p-2 text-white shrink-0">
+                        <Globe className="w-full h-full text-emerald-400" />
+                      </div>
+                      <div className="space-y-1 min-w-0">
+                        <div className="font-extrabold text-sm text-slate-900">Direct Web Website</div>
+                        <div className="text-[11px] text-slate-500">Order Mode: Home Delivery (or optional Takeaway)</div>
+                        <div className="font-mono text-[10px] text-slate-700 bg-white px-2 py-1 rounded border border-emerald-200 truncate select-all">
+                          {onlineUrl}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3 pt-3 border-t border-slate-100">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        navigator.clipboard.writeText(onlineUrl);
+                        setCopiedUrl(onlineUrl);
+                        setTimeout(() => setCopiedUrl(null), 2500);
+                      }}
+                      className="py-2 px-3 rounded-xl text-xs font-bold bg-white hover:bg-slate-100 text-slate-700 border border-slate-200 flex items-center justify-center gap-1.5 transition"
+                    >
+                      {copiedUrl === onlineUrl ? (
+                        <>
+                          <Check className="w-3.5 h-3.5 text-emerald-600" />
+                          <span className="text-emerald-700">Copied</span>
+                        </>
+                      ) : (
+                        <>
+                          <Copy className="w-3.5 h-3.5 text-slate-500" />
+                          <span>Copy Web URL</span>
+                        </>
+                      )}
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        clearQRSession();
+                        onBackToMenu();
+                      }}
+                      className="py-2 px-3 rounded-xl text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white flex items-center justify-center gap-1.5 shadow-xs transition"
+                    >
+                      <ExternalLink className="w-3.5 h-3.5" />
+                      <span>Test Direct Web</span>
+                    </button>
+                  </div>
+                </div>
+              );
+            })()}
+          </div>
+        </div>
+      )}
+
+      {/* Table QR Stand Generator & Print Modal */}
+      {showQRDownloadModal && (
+        <TableQRGeneratorModal
+          tableCount={tableCount}
+          initialSelectedTable={selectedQRTarget}
+          onClose={() => setShowQRDownloadModal(false)}
+          onTestScan={(source, tNum, token) => {
+            switchQRSession({
+              source,
+              orderMode: source === 'counter_qr' ? 'takeaway' : 'dine_in',
+              tableNumber: tNum,
+              token,
+            });
+            onBackToMenu();
+          }}
+        />
+      )}
+
       {/* Print Slip Modal */}
       {printModalData && (
         <PrintModal
@@ -1380,3 +1869,208 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ onBackToMenu }) => {
     </div>
   );
 };
+
+// ================= SUB-COMPONENTS FOR TABLE QR DASHBOARD =================
+
+interface AdminTableQRCardProps {
+  tableNumber: string;
+  tableIndex: number;
+  fullCanonicalUrl: string;
+  token: string;
+  isCounter: boolean;
+  copiedUrl: string | null;
+  onCopy: (url: string) => void;
+  onOpenModal: (target: number | 'counter') => void;
+  onTestScan: () => void;
+}
+
+const AdminTableQRCard: React.FC<AdminTableQRCardProps> = ({
+  tableNumber,
+  tableIndex,
+  fullCanonicalUrl,
+  token,
+  copiedUrl,
+  onCopy,
+  onOpenModal,
+  onTestScan,
+}) => {
+  const [qrImgUrl, setQrImgUrl] = useState<string>('');
+  const [downloading, setDownloading] = useState<boolean>(false);
+
+  useEffect(() => {
+    let active = true;
+    generateQRDataURL(fullCanonicalUrl, 320)
+      .then((url) => {
+        if (active) setQrImgUrl(url);
+      })
+      .catch((e) => console.error(e));
+
+    return () => {
+      active = false;
+    };
+  }, [fullCanonicalUrl]);
+
+  return (
+    <div className="border border-slate-200 rounded-3xl p-4 bg-slate-50/70 hover:bg-white hover:border-amber-400 hover:shadow-lg transition-all duration-200 flex flex-col justify-between space-y-3 group">
+      <div>
+        {/* Table Top Header */}
+        <div className="flex items-center justify-between mb-2">
+          <div className="flex items-center gap-1.5">
+            <span className="w-2.5 h-2.5 rounded-full bg-amber-500"></span>
+            <span className="font-extrabold text-sm text-slate-900">{tableNumber}</span>
+          </div>
+          <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-amber-100 text-amber-900 border border-amber-200">
+            Dine-In Table
+          </span>
+        </div>
+
+        {/* Live Scannable QR Graphic Frame */}
+        <div
+          onClick={() => onOpenModal(tableIndex)}
+          className="w-full aspect-square bg-white border border-slate-200 rounded-2xl p-3 flex flex-col items-center justify-center text-center shadow-inner relative cursor-pointer group-hover:border-amber-300 transition overflow-hidden"
+          title="Click to preview & print table stand"
+        >
+          {qrImgUrl ? (
+            <img
+              src={qrImgUrl}
+              alt={tableNumber}
+              className="w-full h-full object-contain transition group-hover:scale-105"
+            />
+          ) : (
+            <div className="w-20 h-20 bg-slate-950 rounded-lg flex items-center justify-center p-2 text-white">
+              <QrCode className="w-full h-full text-amber-400 animate-pulse" />
+            </div>
+          )}
+
+          <div className="absolute inset-0 bg-slate-950/70 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center text-white p-2 rounded-2xl backdrop-blur-xs">
+            <Printer className="w-6 h-6 text-amber-400 mb-1" />
+            <span className="text-xs font-black">Open Stand Card</span>
+            <span className="text-[10px] text-slate-300">Ready to Print & Download</span>
+          </div>
+        </div>
+
+        <div className="mt-2.5">
+          <span className="text-[10px] text-slate-400 font-semibold uppercase block">Encrypted Entry URL:</span>
+          <div className="font-mono text-[10px] text-slate-700 bg-white px-2 py-1 rounded-lg border border-slate-200 truncate select-all">
+            /r/mozz/table/{tableIndex}?token={token.slice(0, 10)}...
+          </div>
+        </div>
+      </div>
+
+      {/* Action Buttons */}
+      <div className="space-y-2 pt-2 border-t border-slate-200/80">
+        {/* Primary Download Buttons */}
+        <div className="grid grid-cols-2 gap-1.5">
+          <button
+            type="button"
+            disabled={downloading}
+            onClick={async () => {
+              setDownloading(true);
+              try {
+                await downloadTableStandImage(
+                  {
+                    identifier: tableNumber,
+                    qrUrl: fullCanonicalUrl,
+                  },
+                  `Mozz_Stand_${tableNumber.replace(/\s+/g, '_')}.png`
+                );
+              } finally {
+                setDownloading(false);
+              }
+            }}
+            className="py-1.5 px-2 rounded-xl text-[11px] font-bold bg-amber-500 hover:bg-amber-600 text-slate-950 flex items-center justify-center gap-1 shadow-xs transition disabled:opacity-50"
+            title="Download full acrylic table stand graphic (PNG)"
+          >
+            <FileImage className="w-3.5 h-3.5" />
+            <span>Stand PNG</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={async () => {
+              await downloadQRImage(
+                fullCanonicalUrl,
+                `Mozz_QR_${tableNumber.replace(/\s+/g, '_')}.png`,
+                1024
+              );
+            }}
+            className="py-1.5 px-2 rounded-xl text-[11px] font-bold bg-white hover:bg-slate-100 text-slate-700 border border-slate-200 flex items-center justify-center gap-1 transition"
+            title="Download clean QR code PNG only"
+          >
+            <Download className="w-3.5 h-3.5 text-slate-500" />
+            <span>QR Only</span>
+          </button>
+        </div>
+
+        {/* Secondary Test & Copy Actions */}
+        <div className="grid grid-cols-2 gap-1.5">
+          <button
+            type="button"
+            onClick={() => onCopy(fullCanonicalUrl)}
+            className="py-1.5 px-2 rounded-xl text-[11px] font-bold bg-white hover:bg-slate-100 text-slate-700 border border-slate-200 flex items-center justify-center gap-1 transition"
+          >
+            {copiedUrl === fullCanonicalUrl ? (
+              <>
+                <Check className="w-3 h-3 text-emerald-600" />
+                <span className="text-emerald-700">Copied</span>
+              </>
+            ) : (
+              <>
+                <Copy className="w-3 h-3 text-slate-500" />
+                <span>Copy URL</span>
+              </>
+            )}
+          </button>
+
+          <button
+            type="button"
+            onClick={onTestScan}
+            className="py-1.5 px-2 rounded-xl text-[11px] font-bold bg-slate-900 hover:bg-slate-800 text-white flex items-center justify-center gap-1 shadow-xs transition"
+            title={`Simulate customer scanning ${tableNumber} QR`}
+          >
+            <ExternalLink className="w-3 h-3" />
+            <span>Test Scan</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const AdminQRVisualPreview: React.FC<{ url: string; label: string; isCounter?: boolean }> = ({
+  url,
+  label,
+  isCounter = false,
+}) => {
+  const [dataUrl, setDataUrl] = useState<string>('');
+
+  useEffect(() => {
+    generateQRDataURL(url, 280)
+      .then((res) => setDataUrl(res))
+      .catch((e) => console.error(e));
+  }, [url]);
+
+  return (
+    <div className={`flex items-center gap-4 p-4 rounded-2xl border ${
+      isCounter ? 'bg-blue-50/50 border-blue-200' : 'bg-emerald-50/50 border-emerald-200'
+    }`}>
+      <div className="w-24 h-24 bg-white rounded-xl flex items-center justify-center p-1.5 text-slate-950 border border-slate-200 shadow-sm shrink-0">
+        {dataUrl ? (
+          <img src={dataUrl} alt={label} className="w-full h-full object-contain" />
+        ) : (
+          <QrCode className="w-10 h-10 text-blue-500" />
+        )}
+      </div>
+      <div className="space-y-1 min-w-0 flex-1">
+        <div className="font-extrabold text-sm text-slate-900">{label}</div>
+        <div className="text-[11px] text-slate-500">
+          {isCounter ? 'Order Mode: Takeaway (Self-Pickup Express)' : 'Order Mode: Direct Online'}
+        </div>
+        <div className="font-mono text-[10px] text-slate-700 bg-white px-2 py-1 rounded border border-slate-200 truncate select-all">
+          {url}
+        </div>
+      </div>
+    </div>
+  );
+};
+
