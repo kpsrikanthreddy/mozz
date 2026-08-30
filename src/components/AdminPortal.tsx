@@ -203,12 +203,12 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ onBackToMenu }) => {
   };
 
   // Handle PIN login
-  const handleLogin = (e: React.FormEvent) => {
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoginError('');
-    const ok = loginAdmin(pinInput);
+    const ok = await loginAdmin(pinInput);
     if (!ok) {
-      setLoginError('Incorrect PIN or Password. Use "mozz8888" or "admin123"');
+      setLoginError('Incorrect PIN or Password. Enter authorized staff PIN (e.g. 8888).');
     } else {
       setPinInput('');
     }
@@ -287,11 +287,11 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ onBackToMenu }) => {
             <button
               type="button"
               onClick={() => {
-                setPinInput('mozz8888');
+                setPinInput('8888');
               }}
               className="text-rose-600 font-mono font-bold hover:underline"
             >
-              mozz8888
+              8888
             </button>
             <span className="text-slate-400"> (Click to autofill)</span>
           </div>

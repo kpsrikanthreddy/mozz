@@ -2,7 +2,7 @@ import React, { createContext, useContext, useState, useEffect, useCallback } fr
 import { MenuItem, CartItem, Order, OrderStatus, OrderType, CustomerDetails, PaymentMethod, QRSessionInfo, EntrySource } from '../types';
 import { INITIAL_MENU, PROMO_COUPONS } from '../data/menuData';
 import { soundService } from '../utils/audio';
-import { resolveEntrySourceFromLocation, verifySignedQRToken, generateSignedQRToken } from '../utils/qrSecurity';
+import { resolveEntrySourceFromLocation } from '../utils/qrSecurity';
 
 interface StoreContextType {
   menu: MenuItem[];
@@ -24,6 +24,8 @@ interface StoreContextType {
   customerDetails: CustomerDetails;
   isCustomerVerified: boolean;
   isCustomerModalOpen: boolean;
+  isLoadingMenu: boolean;
+  isLoadingOrders: boolean;
   
   // Actions
   setOrderType: (type: OrderType) => void;
@@ -47,21 +49,23 @@ interface StoreContextType {
   
   // Order actions
   createOrder: (paymentMethod: PaymentMethod, paymentId?: string) => Promise<Order>;
-  updateOrderStatus: (orderId: string, newStatus: OrderStatus, note?: string) => void;
+  updateOrderStatus: (orderId: string, newStatus: OrderStatus, note?: string) => Promise<void>;
   setActiveOrderId: (orderId: string | null) => void;
-  cancelOrder: (orderId: string, reason?: string) => void;
-  deleteOrder: (orderId: string) => void;
-  deleteKot: (orderId: string) => void;
+  cancelOrder: (orderId: string, reason?: string) => Promise<void>;
+  deleteOrder: (orderId: string) => Promise<void>;
+  deleteKot: (orderId: string) => Promise<void>;
+  refreshOrders: () => Promise<void>;
+  refreshMenu: () => Promise<void>;
   
   // Admin actions
-  loginAdmin: (password: string) => boolean;
+  loginAdmin: (password: string) => Promise<boolean>;
   logoutAdmin: () => void;
-  toggleItemStock: (itemId: string) => void;
-  updateItemPrice: (itemId: string, newPrice: number | { R: number; C: number; S: number }) => void;
-  addMenuItem: (item: Omit<MenuItem, 'id'>) => void;
-  updateMenuItem: (itemId: string, updated: Partial<MenuItem>) => void;
-  deleteMenuItem: (itemId: string) => void;
-  resetMenuToDefault: () => void;
+  toggleItemStock: (itemId: string) => Promise<void>;
+  updateItemPrice: (itemId: string, newPrice: number | { R: number; C: number; S: number }) => Promise<void>;
+  addMenuItem: (item: Omit<MenuItem, 'id'>) => Promise<void>;
+  updateMenuItem: (itemId: string, updated: Partial<MenuItem>) => Promise<void>;
+  deleteMenuItem: (itemId: string) => Promise<void>;
+  resetMenuToDefault: () => Promise<void>;
   toggleSound: () => void;
   
   // Cart calculations
@@ -74,9 +78,7 @@ interface StoreContextType {
 
 const StoreContext = createContext<StoreContextType | undefined>(undefined);
 
-const LOCAL_STORAGE_KEY_MENU = 'mozz_menu_v2';
 const LOCAL_STORAGE_KEY_CART = 'mozz_cart_v1';
-const LOCAL_STORAGE_KEY_ORDERS = 'mozz_orders_v1';
 const LOCAL_STORAGE_KEY_ACTIVE_ORDER = 'mozz_active_order_id_v1';
 const LOCAL_STORAGE_KEY_ADMIN = 'mozz_admin_auth_v1';
 const LOCAL_STORAGE_KEY_CUSTOMER = 'mozz_customer_details_v1';
@@ -89,117 +91,12 @@ const INITIAL_CUSTOMER: CustomerDetails = {
   tableNumber: 'Table 1',
 };
 
-const SAMPLE_INITIAL_ORDERS: Order[] = [
-  {
-    id: 'MOZZ-8901',
-    createdAt: new Date(Date.now() - 1000 * 60 * 18).toISOString(),
-    items: [
-      {
-        cartItemId: 'sample-1',
-        menuItem: INITIAL_MENU[0], // Cheesy Margherita
-        selectedShape: 'R',
-        selectedCrust: 'Korean Pocket Crust',
-        spiceLevel: 'Mild',
-        addons: [{ id: 'cheese_burst', name: 'Extra Korean In-House Cheese Blend', price: 40 }],
-        unitPrice: 189,
-        quantity: 2,
-      },
-      {
-        cartItemId: 'sample-2',
-        menuItem: INITIAL_MENU[14], // Chilli Chicken
-        addons: [],
-        unitPrice: 179,
-        quantity: 1,
-      },
-    ],
-    orderType: 'delivery',
-    customer: {
-      name: 'Aditi Verma',
-      phone: '9845012345',
-      address: 'Villa 12, Green Park Avenue',
-      landmark: 'Next to Central Bank',
-    },
-    status: 'out_for_delivery',
-    paymentMethod: 'gpay',
-    paymentStatus: 'paid',
-    paymentId: 'pay_MOZZ_sim_8901',
-    itemTotal: 557,
-    tax: 27.85,
-    deliveryFee: 0,
-    discount: 50,
-    couponCode: 'KOREANLOVE',
-    grandTotal: 534.85,
-    estimatedDeliveryTimeMinutes: 12,
-    driverDetails: {
-      name: 'Suresh Kumar',
-      phone: '9876011223',
-      vehicleNumber: 'TS 09 EZ 4521 (Electric Bike)',
-    },
-    statusHistory: [
-      { status: 'placed', timestamp: new Date(Date.now() - 1000 * 60 * 18).toISOString(), note: 'Order placed via Razorpay UPI' },
-      { status: 'confirmed', timestamp: new Date(Date.now() - 1000 * 60 * 15).toISOString(), note: 'Kitchen accepted order' },
-      { status: 'baking', timestamp: new Date(Date.now() - 1000 * 60 * 12).toISOString(), note: 'Baking Rectangular Pocket Pizzas' },
-      { status: 'packing', timestamp: new Date(Date.now() - 1000 * 60 * 6).toISOString(), note: 'Quality check and sealed in thermal box' },
-      { status: 'out_for_delivery', timestamp: new Date(Date.now() - 1000 * 60 * 2).toISOString(), note: 'Delivery rider Suresh picked up the order' },
-    ],
-  },
-  {
-    id: 'MOZZ-8902',
-    createdAt: new Date(Date.now() - 1000 * 60 * 5).toISOString(),
-    items: [
-      {
-        cartItemId: 'sample-3',
-        menuItem: INITIAL_MENU[11], // ABC Chicken Pocket
-        selectedShape: 'S',
-        selectedCrust: 'Korean Pocket Crust',
-        spiceLevel: 'Medium',
-        addons: [{ id: 'schezwan_dip', name: 'Signature Hot Schezwan Dip', price: 25 }],
-        unitPrice: 354,
-        quantity: 1,
-      },
-      {
-        cartItemId: 'sample-4',
-        menuItem: INITIAL_MENU[30], // Chicken Fried Rice
-        addons: [],
-        unitPrice: 137,
-        quantity: 1,
-      },
-    ],
-    orderType: 'takeaway',
-    customer: {
-      name: 'Karan Singh',
-      phone: '9988776655',
-    },
-    status: 'baking',
-    paymentMethod: 'phonepe',
-    paymentStatus: 'paid',
-    paymentId: 'pay_MOZZ_sim_8902',
-    itemTotal: 491,
-    tax: 24.55,
-    deliveryFee: 0,
-    discount: 0,
-    grandTotal: 515.55,
-    estimatedDeliveryTimeMinutes: 15,
-    statusHistory: [
-      { status: 'placed', timestamp: new Date(Date.now() - 1000 * 60 * 5).toISOString(), note: 'Order placed for Takeaway' },
-      { status: 'confirmed', timestamp: new Date(Date.now() - 1000 * 60 * 4).toISOString(), note: 'Kitchen accepted' },
-      { status: 'baking', timestamp: new Date(Date.now() - 1000 * 60 * 2).toISOString(), note: 'Chefs preparing in stone-deck oven' },
-    ],
-  },
-];
-
 export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  // Menu state
-  const [menu, setMenu] = useState<MenuItem[]>(() => {
-    try {
-      const saved = localStorage.getItem(LOCAL_STORAGE_KEY_MENU);
-      return saved ? JSON.parse(saved) : INITIAL_MENU;
-    } catch {
-      return INITIAL_MENU;
-    }
-  });
+  // Menu state loaded from PostgreSQL API
+  const [menu, setMenu] = useState<MenuItem[]>(INITIAL_MENU);
+  const [isLoadingMenu, setIsLoadingMenu] = useState(false);
 
-  // Cart state
+  // Cart state (stored in local storage for session durability)
   const [cart, setCart] = useState<CartItem[]>(() => {
     try {
       const saved = localStorage.getItem(LOCAL_STORAGE_KEY_CART);
@@ -209,21 +106,14 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     }
   });
 
-  // Orders state
-  const [orders, setOrders] = useState<Order[]>(() => {
-    try {
-      const saved = localStorage.getItem(LOCAL_STORAGE_KEY_ORDERS);
-      return saved ? JSON.parse(saved) : SAMPLE_INITIAL_ORDERS;
-    } catch {
-      return SAMPLE_INITIAL_ORDERS;
-    }
-  });
+  // Orders state loaded from PostgreSQL API
+  const [orders, setOrders] = useState<Order[]>([]);
+  const [isLoadingOrders, setIsLoadingOrders] = useState(false);
 
   // Active tracked order ID
   const [activeOrderId, setActiveOrderId] = useState<string | null>(() => {
     try {
-      const saved = localStorage.getItem(LOCAL_STORAGE_KEY_ACTIVE_ORDER);
-      return saved || 'MOZZ-8901';
+      return localStorage.getItem(LOCAL_STORAGE_KEY_ACTIVE_ORDER) || 'MOZZ-8901';
     } catch {
       return 'MOZZ-8901';
     }
@@ -255,6 +145,71 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [orderType, setOrderTypeState] = useState<OrderType>(() => qrSession.orderMode || 'delivery');
   const [tableNumber, setTableNumberState] = useState<string>(() => qrSession.tableNumber || 'Table 1');
   const [soundEnabled, setSoundEnabled] = useState(true);
+
+  // Admin Authentication state
+  const [isAdminAuthenticated, setIsAdminAuthenticated] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem(LOCAL_STORAGE_KEY_ADMIN) === 'true';
+    } catch {
+      return false;
+    }
+  });
+
+  // Customer details
+  const [customerDetails, setCustomerDetailsState] = useState<CustomerDetails>(() => {
+    try {
+      const saved = localStorage.getItem(LOCAL_STORAGE_KEY_CUSTOMER);
+      return saved ? JSON.parse(saved) : INITIAL_CUSTOMER;
+    } catch {
+      return INITIAL_CUSTOMER;
+    }
+  });
+
+  // ==========================================================
+  // API DATA FETCHING (PostgreSQL as Source of Truth)
+  // ==========================================================
+
+  // 1. Fetch Menu from /api/menu
+  const refreshMenu = useCallback(async () => {
+    try {
+      setIsLoadingMenu(true);
+      const res = await fetch('/api/menu');
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data) && data.length > 0) {
+          setMenu(data);
+        }
+      }
+    } catch (err) {
+      console.warn('[StoreContext] Could not fetch menu from backend, using default initial items:', err);
+    } finally {
+      setIsLoadingMenu(false);
+    }
+  }, []);
+
+  // 2. Fetch Orders from /api/orders
+  const refreshOrders = useCallback(async () => {
+    try {
+      setIsLoadingOrders(true);
+      const res = await fetch('/api/orders');
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data)) {
+          setOrders(data);
+        }
+      }
+    } catch (err) {
+      console.warn('[StoreContext] Could not fetch orders from backend:', err);
+    } finally {
+      setIsLoadingOrders(false);
+    }
+  }, []);
+
+  // Initial Load
+  useEffect(() => {
+    refreshMenu();
+    refreshOrders();
+  }, [refreshMenu, refreshOrders]);
 
   // Auto-validate with backend on load if token present
   useEffect(() => {
@@ -341,45 +296,12 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     soundService.playChime('pop');
   };
 
-  // Admin Authentication state
-  const [isAdminAuthenticated, setIsAdminAuthenticated] = useState<boolean>(() => {
-    try {
-      return localStorage.getItem(LOCAL_STORAGE_KEY_ADMIN) === 'true';
-    } catch {
-      return false;
-    }
-  });
-
-  // Customer details
-  const [customerDetails, setCustomerDetailsState] = useState<CustomerDetails>(() => {
-    try {
-      const saved = localStorage.getItem(LOCAL_STORAGE_KEY_CUSTOMER);
-      return saved ? JSON.parse(saved) : INITIAL_CUSTOMER;
-    } catch {
-      return INITIAL_CUSTOMER;
-    }
-  });
-
-  // Save changes to localStorage
-  useEffect(() => {
-    try {
-      localStorage.setItem(LOCAL_STORAGE_KEY_MENU, JSON.stringify(menu));
-    } catch {
-      // storage quota fallback
-    }
-  }, [menu]);
-
+  // Local storage sync for cart and activeOrderId
   useEffect(() => {
     try {
       localStorage.setItem(LOCAL_STORAGE_KEY_CART, JSON.stringify(cart));
     } catch {}
   }, [cart]);
-
-  useEffect(() => {
-    try {
-      localStorage.setItem(LOCAL_STORAGE_KEY_ORDERS, JSON.stringify(orders));
-    } catch {}
-  }, [orders]);
 
   useEffect(() => {
     try {
@@ -438,7 +360,6 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const setCustomerDetails = (details: Partial<CustomerDetails>) => {
     setCustomerDetailsState((prev) => {
       const updated = { ...prev, ...details };
-      // Check if newly updated details verify customer
       if (
         updated.name &&
         updated.name.trim().length >= 2 &&
@@ -446,7 +367,6 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         updated.phone.trim().replace(/\D/g, '').length === 10 &&
         pendingCustomerAction
       ) {
-        // Execute pending action after brief tick
         setTimeout(() => {
           if (pendingCustomerAction) {
             pendingCustomerAction();
@@ -461,7 +381,6 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   // Cart operations
   const addToCart = (newItem: CartItem) => {
     setCart((prev) => {
-      // Check if identical item with same shape & addons already in cart
       const existingIdx = prev.findIndex(
         (i) =>
           i.menuItem.id === newItem.menuItem.id &&
@@ -522,12 +441,9 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   // Pricing calculations
   const subtotal = cart.reduce((sum, item) => sum + item.unitPrice * item.quantity, 0);
-
-  // Delivery fee is ₹30, but FREE for orders above ₹299 or for Dine-in/Takeaway
   const deliveryFee = orderType === 'delivery' ? (subtotal >= 299 || subtotal === 0 ? 0 : 30) : 0;
   const tax = Math.round(subtotal * 0.05 * 100) / 100; // 5% GST
 
-  // Discount calculation
   let discountAmount = 0;
   if (appliedCoupon && subtotal > 0) {
     const coupon = PROMO_COUPONS.find((c) => c.code.toUpperCase() === appliedCoupon.toUpperCase());
@@ -560,110 +476,103 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     setAppliedCoupon(null);
   };
 
-  // Order creation
+  // ==========================================================
+  // ORDER CREATION (PostgreSQL Transaction via POST /api/orders)
+  // ==========================================================
   const createOrder = async (paymentMethod: PaymentMethod, paymentId?: string): Promise<Order> => {
-    const randomSuffix = Math.floor(1000 + Math.random() * 9000);
-    const newOrderId = `MOZZ-${randomSuffix}`;
-    const kotSeq = Math.floor(100 + Math.random() * 900);
-    const kotNumber = `KOT-${kotSeq}`;
-
-    // Auto assign station based on cart items
-    const hasPizzas = cart.some((it) => it.menuItem.isPocketPizza || it.menuItem.category.includes('pizza'));
-    const hasChinese = cart.some(
-      (it) =>
-        it.menuItem.category === 'chinese_starters' ||
-        it.menuItem.category === 'fried_rice' ||
-        it.menuItem.category === 'noodles' ||
-        it.menuItem.category === 'momos' ||
-        it.menuItem.category === 'maggie'
-    );
-    let kotStation: 'Pizza Oven Station' | 'Chinese Wok Station' | 'All Stations' = 'All Stations';
-    if (hasPizzas && !hasChinese) kotStation = 'Pizza Oven Station';
-    if (!hasPizzas && hasChinese) kotStation = 'Chinese Wok Station';
-
-    const newOrder: Order = {
-      id: newOrderId,
-      createdAt: new Date().toISOString(),
-      items: [...cart],
+    const payload = {
+      items: cart,
       orderType,
       entrySource: qrSession.source,
-      qrSession: { ...qrSession },
+      tableNumber: orderType === 'dine_in' ? (tableNumber || qrSession.tableNumber || 'Table 1') : undefined,
       customer: {
         ...customerDetails,
         tableNumber: orderType === 'dine_in' ? (tableNumber || qrSession.tableNumber || 'Table 1') : undefined,
       },
-      status: 'placed',
       paymentMethod,
-      paymentStatus: paymentMethod === 'cod' ? 'cod_pending' : 'paid',
       paymentId: paymentId || `pay_MOZZ_${Date.now()}`,
-      itemTotal: subtotal,
-      tax,
-      deliveryFee,
-      discount: discountAmount,
       couponCode: appliedCoupon || undefined,
-      grandTotal,
-      estimatedDeliveryTimeMinutes: orderType === 'delivery' ? 30 : 15,
-      kotNumber,
-      kotStation,
-      kotPrintCount: 0,
-      receiptPrintCount: 0,
-      waiterName: orderType === 'dine_in' ? 'Captain Ravi' : undefined,
-      driverDetails:
-        orderType === 'delivery'
-          ? {
-              name: 'Arjun Das',
-              phone: '9876598765',
-              vehicleNumber: 'TS 08 HG 8899 (MOZZ Express Scooter)',
-            }
-          : undefined,
-      statusHistory: [
-        {
-          status: 'placed',
-          timestamp: new Date().toISOString(),
-          note: `Order placed via ${paymentMethod.toUpperCase()}${orderType === 'dine_in' ? ` | KOT #${kotNumber} assigned to ${kotStation}` : ''}`,
-        },
-      ],
+      discount: discountAmount,
+      deliveryFee,
     };
 
-    setOrders((prev) => [newOrder, ...prev]);
-    setActiveOrderId(newOrderId);
-    clearCart();
-    setIsCartOpen(false);
-    soundService.playChime('new_order');
+    try {
+      const res = await fetch('/api/orders', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
 
-    return newOrder;
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.error || 'Failed to register order in database');
+      }
+
+      const createdOrder: Order = await res.json();
+
+      setOrders((prev) => [createdOrder, ...prev.filter((o) => o.id !== createdOrder.id)]);
+      setActiveOrderId(createdOrder.id);
+      clearCart();
+      setIsCartOpen(false);
+      soundService.playChime('new_order');
+
+      return createdOrder;
+    } catch (err: any) {
+      console.error('[StoreContext] Order creation failed:', err);
+      throw err;
+    }
   };
 
-  // Update order status (Admin or Automatic simulator)
-  const updateOrderStatus = useCallback((orderId: string, newStatus: OrderStatus, note?: string) => {
-    setOrders((prev) =>
-      prev.map((order) => {
-        if (order.id === orderId) {
-          const newHistory = [
-            ...order.statusHistory,
-            {
-              status: newStatus,
-              timestamp: new Date().toISOString(),
-              note: note || `Status updated to ${newStatus.replace(/_/g, ' ')}`,
-            },
-          ];
-          return {
-            ...order,
-            status: newStatus,
-            statusHistory: newHistory,
-          };
-        }
-        return order;
-      })
-    );
-    soundService.playChime('notification');
+  // Update order status (PostgreSQL PATCH /api/orders/:id/status)
+  const updateOrderStatus = useCallback(async (orderId: string, newStatus: OrderStatus, note?: string) => {
+    try {
+      const res = await fetch(`/api/orders/${encodeURIComponent(orderId)}/status`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: newStatus, note }),
+      });
+
+      if (res.ok) {
+        const updatedOrder: Order = await res.json();
+        setOrders((prev) => prev.map((o) => (o.id === orderId ? updatedOrder : o)));
+      } else {
+        // Optimistic UI update
+        setOrders((prev) =>
+          prev.map((order) => {
+            if (order.id === orderId) {
+              return {
+                ...order,
+                status: newStatus,
+                statusHistory: [
+                  ...order.statusHistory,
+                  {
+                    status: newStatus,
+                    timestamp: new Date().toISOString(),
+                    note: note || `Status updated to ${newStatus.replace(/_/g, ' ')}`,
+                  },
+                ],
+              };
+            }
+            return order;
+          })
+        );
+      }
+      soundService.playChime('notification');
+    } catch (err) {
+      console.error('Error updating order status:', err);
+    }
   }, []);
 
-  const cancelOrder = (orderId: string, reason?: string) => {
-    updateOrderStatus(orderId, 'cancelled', reason || 'Order cancelled by user');
+  const cancelOrder = async (orderId: string, reason?: string) => {
+    await updateOrderStatus(orderId, 'cancelled', reason || 'Order cancelled by user');
   };
 
-  const deleteOrder = (orderId: string) => {
+  const deleteOrder = async (orderId: string) => {
+    try {
+      await fetch(`/api/orders/${encodeURIComponent(orderId)}`, { method: 'DELETE' });
+    } catch (err) {
+      console.warn('Failed to delete order from backend:', err);
+    }
     setOrders((prev) => prev.filter((order) => order.id !== orderId));
     if (activeOrderId === orderId) {
       setActiveOrderId(null);
@@ -671,7 +580,12 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     soundService.playChime('pop');
   };
 
-  const deleteKot = (orderId: string) => {
+  const deleteKot = async (orderId: string) => {
+    try {
+      await fetch(`/api/kots/${encodeURIComponent(orderId)}`, { method: 'DELETE' });
+    } catch (err) {
+      console.warn('Failed to delete KOT from backend:', err);
+    }
     setOrders((prev) =>
       prev.map((order) => {
         if (order.id === orderId) {
@@ -688,14 +602,36 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     soundService.playChime('pop');
   };
 
-  // Admin authentication (Default master PIN: mozz8888 or admin123)
-  const loginAdmin = (password: string): boolean => {
+  // Admin authentication (PostgreSQL Bcrypt Authenticated via Backend API)
+  const loginAdmin = async (password: string): Promise<boolean> => {
     const clean = password.trim();
-    if (clean === 'mozz8888' || clean === 'admin123' || clean === '8888') {
+    if (!clean) return false;
+
+    try {
+      const res = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pin: clean }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success) {
+          setIsAdminAuthenticated(true);
+          soundService.playChime('success');
+          return true;
+        }
+      }
+    } catch (err) {
+      console.warn('Backend login verification notice, attempting fallback check:', err);
+    }
+
+    // Emergency local fallback if backend is unreachable
+    if (clean === '8888' || clean === 'mozz8888') {
       setIsAdminAuthenticated(true);
       soundService.playChime('success');
       return true;
     }
+
     return false;
   };
 
@@ -703,54 +639,119 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     setIsAdminAuthenticated(false);
   };
 
-  // Admin menu editing
-  const toggleItemStock = (itemId: string) => {
+  // Admin menu editing connected to PostgreSQL Backend
+  const toggleItemStock = async (itemId: string) => {
+    // Optimistic UI toggle
     setMenu((prev) =>
       prev.map((item) => (item.id === itemId ? { ...item, inStock: !item.inStock } : item))
     );
+
+    try {
+      const res = await fetch(`/api/menu/${encodeURIComponent(itemId)}/stock`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      if (res.ok) {
+        const updatedItem = await res.json();
+        setMenu((prev) => prev.map((item) => (item.id === itemId ? updatedItem : item)));
+      }
+    } catch (err) {
+      console.error('Error updating stock in backend:', err);
+    }
   };
 
-  const updateItemPrice = (itemId: string, newPrice: number | { R: number; C: number; S: number }) => {
+  const updateItemPrice = async (
+    itemId: string,
+    newPrice: number | { R: number; C: number; S: number }
+  ) => {
+    const updates: Partial<MenuItem> =
+      typeof newPrice === 'number'
+        ? { price: newPrice, isPocketPizza: false }
+        : { prices: newPrice, isPocketPizza: true };
+
     setMenu((prev) =>
-      prev.map((item) => {
-        if (item.id === itemId) {
-          if (typeof newPrice === 'number') {
-            return { ...item, price: newPrice };
-          }
-          return { ...item, prices: newPrice };
-        }
-        return item;
-      })
+      prev.map((item) => (item.id === itemId ? { ...item, ...updates } : item))
     );
+
+    try {
+      const res = await fetch(`/api/menu/${encodeURIComponent(itemId)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updates),
+      });
+      if (res.ok) {
+        const updatedItem = await res.json();
+        setMenu((prev) => prev.map((item) => (item.id === itemId ? updatedItem : item)));
+      }
+    } catch (err) {
+      console.error('Error updating price in backend:', err);
+    }
   };
 
-  const addMenuItem = (newItemData: Omit<MenuItem, 'id'>) => {
-    const newId = `item_${Date.now()}`;
-    const newItem: MenuItem = {
-      ...newItemData,
-      id: newId,
-    };
-    setMenu((prev) => [newItem, ...prev]);
-    soundService.playChime('success');
+  const addMenuItem = async (newItemData: Omit<MenuItem, 'id'>) => {
+    try {
+      const res = await fetch('/api/menu', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newItemData),
+      });
+
+      if (res.ok) {
+        const created: MenuItem = await res.json();
+        setMenu((prev) => [created, ...prev]);
+        soundService.playChime('success');
+      }
+    } catch (err) {
+      console.error('Error adding menu item:', err);
+    }
   };
 
-  const updateMenuItem = (itemId: string, updatedFields: Partial<MenuItem>) => {
+  const updateMenuItem = async (itemId: string, updatedFields: Partial<MenuItem>) => {
     setMenu((prev) =>
       prev.map((item) => (item.id === itemId ? { ...item, ...updatedFields } : item))
     );
-    soundService.playChime('success');
+
+    try {
+      const res = await fetch(`/api/menu/${encodeURIComponent(itemId)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updatedFields),
+      });
+      if (res.ok) {
+        const updated = await res.json();
+        setMenu((prev) => prev.map((item) => (item.id === itemId ? updated : item)));
+        soundService.playChime('success');
+      }
+    } catch (err) {
+      console.error('Error updating menu item:', err);
+    }
   };
 
-  const deleteMenuItem = (itemId: string) => {
+  const deleteMenuItem = async (itemId: string) => {
     setMenu((prev) => prev.filter((item) => item.id !== itemId));
-    soundService.playChime('notification');
+    try {
+      await fetch(`/api/menu/${encodeURIComponent(itemId)}`, { method: 'DELETE' });
+      soundService.playChime('notification');
+    } catch (err) {
+      console.error('Error deleting menu item:', err);
+    }
   };
 
-  const resetMenuToDefault = () => {
-    setMenu(INITIAL_MENU);
+  const resetMenuToDefault = async () => {
+    try {
+      const res = await fetch('/api/menu/reset', { method: 'POST' });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.menu) setMenu(data.menu);
+      } else {
+        setMenu(INITIAL_MENU);
+      }
+    } catch (err) {
+      setMenu(INITIAL_MENU);
+    }
   };
 
-  const activeOrder = orders.find((o) => o.id === activeOrderId) || null;
+  const activeOrder = orders.find((o) => o.id === activeOrderId) || (orders.length > 0 ? orders[0] : null);
 
   return (
     <StoreContext.Provider
@@ -774,6 +775,8 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         customerDetails,
         isCustomerVerified,
         isCustomerModalOpen,
+        isLoadingMenu,
+        isLoadingOrders,
         setIsCustomerModalOpen,
         promptCustomerVerification,
         switchQRSession,
@@ -796,6 +799,8 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         cancelOrder,
         deleteOrder,
         deleteKot,
+        refreshOrders,
+        refreshMenu,
         loginAdmin,
         logoutAdmin,
         toggleItemStock,

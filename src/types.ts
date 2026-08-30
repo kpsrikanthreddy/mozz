@@ -92,6 +92,7 @@ export interface CustomerDetails {
 
 export interface Order {
   id: string;
+  orderNumber?: string;
   createdAt: string;
   items: CartItem[];
   orderType: OrderType;
