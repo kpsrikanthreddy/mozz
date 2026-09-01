@@ -72,10 +72,11 @@ export async function assembleOrderObject(
     cartItemId: it.id || `ci-${Math.random().toString(36).slice(2, 7)}`,
     menuItem: {
       id: it.menu_item_id || it.id,
+      itemCode: it.item_code || undefined,
       name: it.item_name || 'Item',
-      category: 'pocket_pizza_veg',
-      dietary: 'veg',
-      description: '',
+      category: it.category || 'pocket_pizza_veg',
+      dietary: it.dietary_type || 'veg',
+      description: it.description || '',
       inStock: true,
       price: Number(it.unit_price),
       isPocketPizza: Boolean(it.selected_shape),
@@ -289,7 +290,27 @@ export async function createOrder(payload: CreateOrderPayload): Promise<Order> {
 
       // Insert Order Items with Foreign Key to menu_items ON DELETE SET NULL
       const itemRows: any[] = [];
+      const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
       for (const item of payload.items) {
+        let resolvedMenuItemUuid: string | null = null;
+        const rawItemId = item.menuItem?.id || item.menuItem?.itemCode;
+
+        if (rawItemId) {
+          if (uuidRegex.test(rawItemId)) {
+            resolvedMenuItemUuid = rawItemId;
+          } else {
+            // Find by item_code in menu_items
+            const findItemRes = await pgClient.query(
+              `SELECT id FROM menu_items WHERE (item_code = $1 OR id::text = $1) AND restaurant_id = $2 LIMIT 1`,
+              [rawItemId, restaurantId]
+            );
+            if (findItemRes.rows.length > 0) {
+              resolvedMenuItemUuid = findItemRes.rows[0].id;
+            }
+          }
+        }
+
         const insertItemSql = `
           INSERT INTO order_items (
             order_id, restaurant_id, menu_item_id, item_name,
@@ -304,7 +325,7 @@ export async function createOrder(payload: CreateOrderPayload): Promise<Order> {
         const itemValues = [
           internalOrderId,
           restaurantId,
-          item.menuItem?.id || null,
+          resolvedMenuItemUuid,
           item.menuItem?.name || 'Item',
           item.quantity,
           item.unitPrice,
@@ -498,7 +519,13 @@ export async function getOrders(
 
       const results: Order[] = [];
       for (const row of orderRows) {
-        const itemRows = (await query(`SELECT * FROM order_items WHERE order_id = $1`, [row.id])).rows;
+        const itemRows = (await query(
+          `SELECT oi.*, mi.item_code, mi.category, mi.dietary_type, mi.description
+           FROM order_items oi
+           LEFT JOIN menu_items mi ON oi.menu_item_id = mi.id
+           WHERE oi.order_id = $1`,
+          [row.id]
+        )).rows;
         const histRows = (await query(`SELECT * FROM order_status_history WHERE order_id = $1 ORDER BY created_at ASC`, [row.id])).rows;
         const custObj = row.cust_phone ? {
           name: row.cust_name,
@@ -551,7 +578,13 @@ export async function getOrderById(orderIdentifier: string, restaurantId: string
       if (orderRes.rows.length === 0) return null;
       const row = orderRes.rows[0];
 
-      const itemRows = (await query(`SELECT * FROM order_items WHERE order_id = $1`, [row.id])).rows;
+      const itemRows = (await query(
+        `SELECT oi.*, mi.item_code, mi.category, mi.dietary_type, mi.description
+         FROM order_items oi
+         LEFT JOIN menu_items mi ON oi.menu_item_id = mi.id
+         WHERE oi.order_id = $1`,
+        [row.id]
+      )).rows;
       const histRows = (await query(`SELECT * FROM order_status_history WHERE order_id = $1 ORDER BY created_at ASC`, [row.id])).rows;
       const custObj = row.cust_phone ? {
         name: row.cust_name,

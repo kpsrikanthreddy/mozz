@@ -1,12 +1,15 @@
 -- ==========================================================
 -- MOZZ Chinese & Pizzateria - PostgreSQL Multi-Tenant Schema
+-- Idempotent DDL: Creates or Modifies All Database Objects Safely
 -- ==========================================================
 
--- Enable UUID extension if available
+-- Enable standard UUID and cryptography extensions if available
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
+-- ==========================================================
 -- 1. RESTAURANTS (Root Multi-Tenant Table)
+-- ==========================================================
 CREATE TABLE IF NOT EXISTS restaurants (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     name VARCHAR(255) NOT NULL,
@@ -22,7 +25,19 @@ CREATE TABLE IF NOT EXISTS restaurants (
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- Modify/Add columns if upgrading existing table
+ALTER TABLE restaurants ADD COLUMN IF NOT EXISTS phone VARCHAR(50);
+ALTER TABLE restaurants ADD COLUMN IF NOT EXISTS email VARCHAR(255);
+ALTER TABLE restaurants ADD COLUMN IF NOT EXISTS logo_url TEXT;
+ALTER TABLE restaurants ADD COLUMN IF NOT EXISTS tagline VARCHAR(255);
+ALTER TABLE restaurants ADD COLUMN IF NOT EXISTS currency VARCHAR(10) DEFAULT 'INR';
+ALTER TABLE restaurants ADD COLUMN IF NOT EXISTS tax_rate NUMERIC(5, 2) DEFAULT 5.00;
+ALTER TABLE restaurants ADD COLUMN IF NOT EXISTS status VARCHAR(50) DEFAULT 'active';
+ALTER TABLE restaurants ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
+
+-- ==========================================================
 -- 2. RESTAURANT BRANCHES (Multi-Location Support)
+-- ==========================================================
 CREATE TABLE IF NOT EXISTS restaurant_branches (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     restaurant_id UUID NOT NULL REFERENCES restaurants(id) ON DELETE CASCADE,
@@ -40,7 +55,20 @@ CREATE TABLE IF NOT EXISTS restaurant_branches (
     CONSTRAINT unique_restaurant_branch_slug UNIQUE (restaurant_id, slug)
 );
 
+-- Modify/Add columns if upgrading existing table
+ALTER TABLE restaurant_branches ADD COLUMN IF NOT EXISTS slug VARCHAR(100);
+ALTER TABLE restaurant_branches ADD COLUMN IF NOT EXISTS address TEXT;
+ALTER TABLE restaurant_branches ADD COLUMN IF NOT EXISTS latitude NUMERIC(10, 7);
+ALTER TABLE restaurant_branches ADD COLUMN IF NOT EXISTS longitude NUMERIC(10, 7);
+ALTER TABLE restaurant_branches ADD COLUMN IF NOT EXISTS delivery_radius_km NUMERIC(6, 2) DEFAULT 10.00;
+ALTER TABLE restaurant_branches ADD COLUMN IF NOT EXISTS phone VARCHAR(50);
+ALTER TABLE restaurant_branches ADD COLUMN IF NOT EXISTS email VARCHAR(255);
+ALTER TABLE restaurant_branches ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE;
+ALTER TABLE restaurant_branches ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
+
+-- ==========================================================
 -- 3. RESTAURANT USERS & STAFF (Bcrypt Hashed Credentials Only)
+-- ==========================================================
 CREATE TABLE IF NOT EXISTS restaurant_users (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     restaurant_id UUID NOT NULL REFERENCES restaurants(id) ON DELETE CASCADE,
@@ -48,7 +76,7 @@ CREATE TABLE IF NOT EXISTS restaurant_users (
     name VARCHAR(255) NOT NULL,
     email VARCHAR(255) NOT NULL,
     phone VARCHAR(50),
-    role VARCHAR(50) NOT NULL DEFAULT 'staff' CHECK (role IN ('owner', 'admin', 'manager', 'chef', 'cashier', 'waiter', 'rider')),
+    role VARCHAR(50) NOT NULL DEFAULT 'staff',
     pin_hash VARCHAR(255),
     is_active BOOLEAN DEFAULT TRUE,
     created_at TIMESTAMPTZ DEFAULT NOW(),
@@ -56,7 +84,21 @@ CREATE TABLE IF NOT EXISTS restaurant_users (
     CONSTRAINT unique_restaurant_user_email UNIQUE (restaurant_id, email)
 );
 
+-- Modify/Add columns and update constraints on existing table
+ALTER TABLE restaurant_users ADD COLUMN IF NOT EXISTS branch_id UUID REFERENCES restaurant_branches(id) ON DELETE SET NULL;
+ALTER TABLE restaurant_users ADD COLUMN IF NOT EXISTS phone VARCHAR(50);
+ALTER TABLE restaurant_users ADD COLUMN IF NOT EXISTS role VARCHAR(50) DEFAULT 'staff';
+ALTER TABLE restaurant_users ADD COLUMN IF NOT EXISTS pin_hash VARCHAR(255);
+ALTER TABLE restaurant_users ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE;
+ALTER TABLE restaurant_users ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
+
+ALTER TABLE restaurant_users DROP CONSTRAINT IF EXISTS restaurant_users_role_check;
+ALTER TABLE restaurant_users ADD CONSTRAINT restaurant_users_role_check 
+    CHECK (LOWER(role) IN ('super_admin', 'superadmin', 'restaurant_owner', 'owner', 'admin', 'branch_manager', 'manager', 'cashier', 'kitchen', 'chef', 'waiter', 'rider', 'staff'));
+
+-- ==========================================================
 -- 4. RESTAURANT TABLES (For Dine-In & Table QR Ordering)
+-- ==========================================================
 CREATE TABLE IF NOT EXISTS restaurant_tables (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     restaurant_id UUID NOT NULL REFERENCES restaurants(id) ON DELETE CASCADE,
@@ -70,7 +112,16 @@ CREATE TABLE IF NOT EXISTS restaurant_tables (
     CONSTRAINT unique_restaurant_table UNIQUE (restaurant_id, branch_id, table_number)
 );
 
+-- Modify/Add columns on existing table
+ALTER TABLE restaurant_tables ADD COLUMN IF NOT EXISTS branch_id UUID REFERENCES restaurant_branches(id) ON DELETE SET NULL;
+ALTER TABLE restaurant_tables ADD COLUMN IF NOT EXISTS table_name VARCHAR(100);
+ALTER TABLE restaurant_tables ADD COLUMN IF NOT EXISTS capacity INT DEFAULT 4;
+ALTER TABLE restaurant_tables ADD COLUMN IF NOT EXISTS qr_token_id VARCHAR(255);
+ALTER TABLE restaurant_tables ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE;
+
+-- ==========================================================
 -- 5. CUSTOMERS (Tenant-Scoped & Unique by Phone)
+-- ==========================================================
 CREATE TABLE IF NOT EXISTS customers (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     restaurant_id UUID NOT NULL REFERENCES restaurants(id) ON DELETE CASCADE,
@@ -85,7 +136,16 @@ CREATE TABLE IF NOT EXISTS customers (
     CONSTRAINT unique_restaurant_customer_phone UNIQUE (restaurant_id, phone)
 );
 
+-- Modify/Add columns on existing table
+ALTER TABLE customers ADD COLUMN IF NOT EXISTS email VARCHAR(255);
+ALTER TABLE customers ADD COLUMN IF NOT EXISTS address TEXT;
+ALTER TABLE customers ADD COLUMN IF NOT EXISTS landmark TEXT;
+ALTER TABLE customers ADD COLUMN IF NOT EXISTS notes TEXT;
+ALTER TABLE customers ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
+
+-- ==========================================================
 -- 6. MENU CATEGORIES
+-- ==========================================================
 CREATE TABLE IF NOT EXISTS menu_categories (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     restaurant_id UUID NOT NULL REFERENCES restaurants(id) ON DELETE CASCADE,
@@ -97,15 +157,22 @@ CREATE TABLE IF NOT EXISTS menu_categories (
     CONSTRAINT unique_restaurant_category_slug UNIQUE (restaurant_id, slug)
 );
 
--- 7. MENU ITEMS
+-- Modify/Add columns on existing table
+ALTER TABLE menu_categories ADD COLUMN IF NOT EXISTS display_order INT DEFAULT 0;
+ALTER TABLE menu_categories ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE;
+
+-- ==========================================================
+-- 7. MENU ITEMS (Multi-Tenant Item Code Unique per Restaurant)
+-- ==========================================================
 CREATE TABLE IF NOT EXISTS menu_items (
-    id VARCHAR(100) PRIMARY KEY,
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     restaurant_id UUID NOT NULL REFERENCES restaurants(id) ON DELETE CASCADE,
     branch_id UUID REFERENCES restaurant_branches(id) ON DELETE SET NULL,
+    item_code VARCHAR(100) NOT NULL,
     category VARCHAR(100) NOT NULL,
     name VARCHAR(255) NOT NULL,
     description TEXT,
-    dietary_type VARCHAR(50) NOT NULL CHECK (dietary_type IN ('veg', 'non-veg', 'egg', 'dessert')),
+    dietary_type VARCHAR(50) NOT NULL DEFAULT 'veg' CHECK (dietary_type IN ('veg', 'non-veg', 'egg', 'dessert')),
     price NUMERIC(10, 2),
     price_r NUMERIC(10, 2),
     price_c NUMERIC(10, 2),
@@ -119,10 +186,28 @@ CREATE TABLE IF NOT EXISTS menu_items (
     badge VARCHAR(100),
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW(),
-    CONSTRAINT unique_restaurant_menu_item UNIQUE (restaurant_id, id)
+    CONSTRAINT unique_restaurant_item_code UNIQUE (restaurant_id, item_code)
 );
 
+-- Modify/Add columns on existing table
+ALTER TABLE menu_items ADD COLUMN IF NOT EXISTS branch_id UUID REFERENCES restaurant_branches(id) ON DELETE SET NULL;
+ALTER TABLE menu_items ADD COLUMN IF NOT EXISTS item_code VARCHAR(100);
+ALTER TABLE menu_items ADD COLUMN IF NOT EXISTS price NUMERIC(10, 2);
+ALTER TABLE menu_items ADD COLUMN IF NOT EXISTS price_r NUMERIC(10, 2);
+ALTER TABLE menu_items ADD COLUMN IF NOT EXISTS price_c NUMERIC(10, 2);
+ALTER TABLE menu_items ADD COLUMN IF NOT EXISTS price_s NUMERIC(10, 2);
+ALTER TABLE menu_items ADD COLUMN IF NOT EXISTS is_pocket_pizza BOOLEAN DEFAULT FALSE;
+ALTER TABLE menu_items ADD COLUMN IF NOT EXISTS is_popular BOOLEAN DEFAULT FALSE;
+ALTER TABLE menu_items ADD COLUMN IF NOT EXISTS is_chef_special BOOLEAN DEFAULT FALSE;
+ALTER TABLE menu_items ADD COLUMN IF NOT EXISTS spicy_level INT DEFAULT 0;
+ALTER TABLE menu_items ADD COLUMN IF NOT EXISTS in_stock BOOLEAN DEFAULT TRUE;
+ALTER TABLE menu_items ADD COLUMN IF NOT EXISTS image_url TEXT;
+ALTER TABLE menu_items ADD COLUMN IF NOT EXISTS badge VARCHAR(100);
+ALTER TABLE menu_items ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
+
+-- ==========================================================
 -- 8. ORDERS (UUID Internal Primary Key + Tenant Unique Order Number)
+-- ==========================================================
 CREATE TABLE IF NOT EXISTS orders (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     order_number VARCHAR(100) NOT NULL,
@@ -158,12 +243,35 @@ CREATE TABLE IF NOT EXISTS orders (
     CONSTRAINT unique_restaurant_order_number UNIQUE (restaurant_id, order_number)
 );
 
--- 9. ORDER ITEMS (Foreign Key to menu_items ON DELETE SET NULL)
+-- Modify/Add columns on existing table
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS branch_id UUID REFERENCES restaurant_branches(id) ON DELETE SET NULL;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS customer_id UUID REFERENCES customers(id) ON DELETE SET NULL;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS table_id UUID REFERENCES restaurant_tables(id) ON DELETE SET NULL;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS table_number VARCHAR(50);
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS entry_source VARCHAR(50) DEFAULT 'online_web';
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS delivery_fee NUMERIC(10, 2) DEFAULT 0.00;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS discount NUMERIC(10, 2) DEFAULT 0.00;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS coupon_code VARCHAR(100);
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS estimated_delivery_time_minutes INT DEFAULT 25;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS kot_number VARCHAR(50);
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS kot_station VARCHAR(100);
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS waiter_name VARCHAR(100);
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS kot_print_count INT DEFAULT 0;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS receipt_print_count INT DEFAULT 0;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS driver_name VARCHAR(100);
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS driver_phone VARCHAR(50);
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS driver_vehicle VARCHAR(100);
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS customer_snapshot JSONB;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
+
+-- ==========================================================
+-- 9. ORDER ITEMS (UUID Foreign Key to menu_items ON DELETE SET NULL)
+-- ==========================================================
 CREATE TABLE IF NOT EXISTS order_items (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     order_id UUID NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
     restaurant_id UUID NOT NULL REFERENCES restaurants(id) ON DELETE CASCADE,
-    menu_item_id VARCHAR(100) REFERENCES menu_items(id) ON DELETE SET NULL,
+    menu_item_id UUID REFERENCES menu_items(id) ON DELETE SET NULL,
     item_name VARCHAR(255) NOT NULL,
     quantity INT NOT NULL DEFAULT 1 CHECK (quantity > 0),
     unit_price NUMERIC(10, 2) NOT NULL,
@@ -176,7 +284,19 @@ CREATE TABLE IF NOT EXISTS order_items (
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- Modify/Add columns on existing table
+ALTER TABLE order_items ADD COLUMN IF NOT EXISTS restaurant_id UUID REFERENCES restaurants(id) ON DELETE CASCADE;
+ALTER TABLE order_items ADD COLUMN IF NOT EXISTS menu_item_id UUID REFERENCES menu_items(id) ON DELETE SET NULL;
+ALTER TABLE order_items ADD COLUMN IF NOT EXISTS selected_shape VARCHAR(10);
+ALTER TABLE order_items ADD COLUMN IF NOT EXISTS selected_crust VARCHAR(100);
+ALTER TABLE order_items ADD COLUMN IF NOT EXISTS spice_level VARCHAR(50);
+ALTER TABLE order_items ADD COLUMN IF NOT EXISTS addons JSONB DEFAULT '[]'::jsonb;
+ALTER TABLE order_items ADD COLUMN IF NOT EXISTS special_instructions TEXT;
+ALTER TABLE order_items ADD COLUMN IF NOT EXISTS item_metadata JSONB DEFAULT '{}'::jsonb;
+
+-- ==========================================================
 -- 10. ORDER STATUS HISTORY (Audit Trail)
+-- ==========================================================
 CREATE TABLE IF NOT EXISTS order_status_history (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     order_id UUID NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
@@ -186,7 +306,9 @@ CREATE TABLE IF NOT EXISTS order_status_history (
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- ==========================================================
 -- 11. PAYMENTS (Secure Audit - No Raw Card or UPI PIN Storage)
+-- ==========================================================
 CREATE TABLE IF NOT EXISTS payments (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     order_id UUID NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
@@ -202,7 +324,16 @@ CREATE TABLE IF NOT EXISTS payments (
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- Modify/Add columns on existing table
+ALTER TABLE payments ADD COLUMN IF NOT EXISTS provider VARCHAR(50) DEFAULT 'razorpay';
+ALTER TABLE payments ADD COLUMN IF NOT EXISTS provider_order_id VARCHAR(255);
+ALTER TABLE payments ADD COLUMN IF NOT EXISTS provider_payment_id VARCHAR(255);
+ALTER TABLE payments ADD COLUMN IF NOT EXISTS payment_method VARCHAR(50);
+ALTER TABLE payments ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
+
+-- ==========================================================
 -- 12. KOTS (Kitchen Order Tickets)
+-- ==========================================================
 CREATE TABLE IF NOT EXISTS kots (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     restaurant_id UUID NOT NULL REFERENCES restaurants(id) ON DELETE CASCADE,
@@ -216,7 +347,14 @@ CREATE TABLE IF NOT EXISTS kots (
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- Modify/Add columns on existing table
+ALTER TABLE kots ADD COLUMN IF NOT EXISTS branch_id UUID REFERENCES restaurant_branches(id) ON DELETE SET NULL;
+ALTER TABLE kots ADD COLUMN IF NOT EXISTS print_count INT DEFAULT 0;
+ALTER TABLE kots ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
+
+-- ==========================================================
 -- 13. QR CODES (Unique QR Tokens & Anti-Tamper Registry)
+-- ==========================================================
 CREATE TABLE IF NOT EXISTS qr_codes (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     restaurant_id UUID NOT NULL REFERENCES restaurants(id) ON DELETE CASCADE,
@@ -227,11 +365,17 @@ CREATE TABLE IF NOT EXISTS qr_codes (
     target_url TEXT NOT NULL,
     is_active BOOLEAN DEFAULT TRUE,
     created_at TIMESTAMPTZ DEFAULT NOW(),
-    CONSTRAINT unique_qr_token UNIQUE (token),
-    CONSTRAINT unique_restaurant_qr_token UNIQUE (restaurant_id, token)
+    CONSTRAINT unique_qr_token UNIQUE (token)
 );
 
+-- Modify/Add columns on existing table
+ALTER TABLE qr_codes ADD COLUMN IF NOT EXISTS branch_id UUID REFERENCES restaurant_branches(id) ON DELETE SET NULL;
+ALTER TABLE qr_codes ADD COLUMN IF NOT EXISTS table_id UUID REFERENCES restaurant_tables(id) ON DELETE SET NULL;
+ALTER TABLE qr_codes ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE;
+
+-- ==========================================================
 -- 14. SUBSCRIPTIONS (SaaS Plan & Idempotent Multi-Run Safe)
+-- ==========================================================
 CREATE TABLE IF NOT EXISTS subscriptions (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     restaurant_id UUID NOT NULL REFERENCES restaurants(id) ON DELETE CASCADE,
@@ -245,10 +389,55 @@ CREATE TABLE IF NOT EXISTS subscriptions (
     CONSTRAINT unique_restaurant_subscription UNIQUE (restaurant_id)
 );
 
--- ==========================================================
--- PERFORMANCE INDEXES & TENANT SECURITY FILTERS
--- ==========================================================
+-- Modify/Add columns on existing table
+ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS plan_name VARCHAR(100) DEFAULT 'growth';
+ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS status VARCHAR(50) DEFAULT 'active';
+ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS billing_cycle VARCHAR(50) DEFAULT 'monthly';
+ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS amount NUMERIC(10, 2) DEFAULT 0.00;
 
+-- ==========================================================
+-- 15. AUTOMATIC UPDATED_AT TRIGGER FUNCTION
+-- ==========================================================
+CREATE OR REPLACE FUNCTION update_updated_at_column()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at = NOW();
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Safely attach triggers to tables if they don't already exist
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'set_restaurants_updated_at') THEN
+        CREATE TRIGGER set_restaurants_updated_at BEFORE UPDATE ON restaurants FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'set_branches_updated_at') THEN
+        CREATE TRIGGER set_branches_updated_at BEFORE UPDATE ON restaurant_branches FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'set_users_updated_at') THEN
+        CREATE TRIGGER set_users_updated_at BEFORE UPDATE ON restaurant_users FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'set_customers_updated_at') THEN
+        CREATE TRIGGER set_customers_updated_at BEFORE UPDATE ON customers FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'set_menu_items_updated_at') THEN
+        CREATE TRIGGER set_menu_items_updated_at BEFORE UPDATE ON menu_items FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'set_orders_updated_at') THEN
+        CREATE TRIGGER set_orders_updated_at BEFORE UPDATE ON orders FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'set_payments_updated_at') THEN
+        CREATE TRIGGER set_payments_updated_at BEFORE UPDATE ON payments FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'set_kots_updated_at') THEN
+        CREATE TRIGGER set_kots_updated_at BEFORE UPDATE ON kots FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+    END IF;
+END $$;
+
+-- ==========================================================
+-- 16. PERFORMANCE INDEXES & TENANT SECURITY FILTERS
+-- ==========================================================
 CREATE INDEX IF NOT EXISTS idx_restaurants_slug ON restaurants(slug);
 CREATE INDEX IF NOT EXISTS idx_branches_restaurant_id ON restaurant_branches(restaurant_id);
 CREATE INDEX IF NOT EXISTS idx_branches_rest_branch ON restaurant_branches(restaurant_id, id);
@@ -266,6 +455,7 @@ CREATE INDEX IF NOT EXISTS idx_customers_rest_phone ON customers(restaurant_id, 
 
 CREATE INDEX IF NOT EXISTS idx_menu_items_restaurant_id ON menu_items(restaurant_id);
 CREATE INDEX IF NOT EXISTS idx_menu_items_branch_id ON menu_items(branch_id);
+CREATE INDEX IF NOT EXISTS idx_menu_items_item_code ON menu_items(restaurant_id, item_code);
 CREATE INDEX IF NOT EXISTS idx_menu_items_in_stock ON menu_items(in_stock);
 CREATE INDEX IF NOT EXISTS idx_menu_items_category ON menu_items(category);
 

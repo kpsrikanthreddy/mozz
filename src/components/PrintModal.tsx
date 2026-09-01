@@ -68,7 +68,7 @@ export const PrintModal: React.FC<PrintModalProps> = ({ order, type, onClose, on
             <div className="text-center border-b border-dashed border-slate-400 pb-3">
               <div className="text-base font-black tracking-wider">MOZZ PIZZATERIA</div>
               <div className="text-[10px] text-slate-600">Authentic Korean Pocket Pizzas & Chinese</div>
-              <div className="text-[10px] text-slate-500">GSTIN: 36AAECR1234F1Z9 | Ph: +91 98765 98765</div>
+              <div className="text-[10px] text-slate-500">GSTIN: 36AAECR1234F1Z9 | Ph: +91 81796 20607</div>
 
               {type === 'kot' ? (
                 <div className="mt-2 py-1 bg-amber-100 border border-amber-300 font-black text-amber-900 rounded text-xs">

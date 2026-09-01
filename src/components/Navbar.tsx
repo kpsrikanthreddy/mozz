@@ -21,8 +21,8 @@ import {
 import { OrderType } from '../types';
 
 interface NavbarProps {
-  currentView: 'menu' | 'track' | 'admin';
-  onNavigate: (view: 'menu' | 'track' | 'admin') => void;
+  currentView: 'menu' | 'track' | string;
+  onNavigate: (view: 'menu' | 'track') => void;
   onOpenShapeGuide: () => void;
 }
 
@@ -171,20 +171,6 @@ export const Navbar: React.FC<NavbarProps> = ({
                     <span className="relative inline-flex rounded-full h-2 w-2 bg-rose-500"></span>
                   </span>
                 )}
-              </span>
-            </button>
-
-            <button
-              onClick={() => onNavigate('admin')}
-              className={`px-3.5 py-2 rounded-xl text-sm font-semibold transition-all ${
-                currentView === 'admin'
-                  ? 'bg-slate-900 text-white shadow-xs'
-                  : 'text-slate-500 hover:text-slate-800 hover:bg-slate-100'
-              }`}
-            >
-              <span className="flex items-center gap-1.5">
-                <ShieldAlert className="w-4 h-4 text-amber-500" />
-                {isAdminAuthenticated ? 'Admin Dashboard' : 'Admin Portal'}
               </span>
             </button>
           </div>
@@ -349,17 +335,6 @@ export const Navbar: React.FC<NavbarProps> = ({
                 {activeOrder.status}
               </span>
             )}
-          </button>
-
-          <button
-            onClick={() => {
-              onNavigate('admin');
-              setMobileMenuOpen(false);
-            }}
-            className="w-full text-left px-3 py-2.5 rounded-xl text-sm font-semibold text-slate-600 hover:bg-slate-100 flex items-center gap-2"
-          >
-            <ShieldAlert className="w-4 h-4 text-amber-500" />
-            Restaurant Admin Portal
           </button>
         </div>
       )}

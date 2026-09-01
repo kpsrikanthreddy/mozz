@@ -353,24 +353,20 @@ export async function initializeDatabase() {
       console.info('[DB] Successfully connected to PostgreSQL instance.');
       isPostgresActive = true;
 
-      // Run schema initialization
+      // Run schema initialization (Creates or modifies existing tables, columns, constraints, triggers, indexes)
       const schemaPath = path.join(process.cwd(), 'database', 'schema.sql');
       if (fs.existsSync(schemaPath)) {
         const schemaSql = fs.readFileSync(schemaPath, 'utf-8');
         await client.query(schemaSql);
-        console.info('[DB] PostgreSQL multi-tenant schema verified/applied.');
+        console.info('[DB] PostgreSQL multi-tenant schema verified/applied (created or modified objects).');
       }
 
-      // Check if restaurants table has default record, if not or on startup apply seed.sql safely
-      const countRes = await client.query('SELECT COUNT(*) FROM restaurants');
-      const count = parseInt(countRes.rows[0]?.count || '0', 10);
-      if (count === 0) {
-        const seedPath = path.join(process.cwd(), 'database', 'seed.sql');
-        if (fs.existsSync(seedPath)) {
-          const seedSql = fs.readFileSync(seedPath, 'utf-8');
-          await client.query(seedSql);
-          console.info('[DB] Seed data applied successfully to PostgreSQL.');
-        }
+      // Apply seed script (Idempotently creates or modifies base restaurant, branch, tables, categories & menu items)
+      const seedPath = path.join(process.cwd(), 'database', 'seed.sql');
+      if (fs.existsSync(seedPath)) {
+        const seedSql = fs.readFileSync(seedPath, 'utf-8');
+        await client.query(seedSql);
+        console.info('[DB] Seed data verified/applied (created or modified existing objects).');
       }
 
       return { success: true, mode: 'postgresql' };

@@ -1,5 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useStore } from '../context/StoreContext';
+import { useAdminAuth } from '../context/AdminAuthContext';
+import { soundService } from '../utils/audio';
 import { Order, OrderStatus, MenuItem, FoodCategory, DietaryType } from '../types';
 import {
   ShieldAlert,
@@ -56,15 +58,11 @@ interface AdminPortalProps {
 
 export const AdminPortal: React.FC<AdminPortalProps> = ({ onBackToMenu }) => {
   const {
-    orders,
+    orders: contextOrders,
     menu,
     isAdminAuthenticated,
     loginAdmin,
     logoutAdmin,
-    updateOrderStatus,
-    cancelOrder,
-    deleteOrder,
-    deleteKot,
     toggleItemStock,
     updateItemPrice,
     addMenuItem,
@@ -77,6 +75,117 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ onBackToMenu }) => {
     clearQRSession,
     qrSession,
   } = useStore();
+
+  const { user: authUser, isAuthenticated: isAuthFromContext, adminFetch, logout: authLogout } = useAdminAuth();
+
+  const [adminOrders, setAdminOrders] = useState<Order[]>([]);
+  const [isLoadingOrders, setIsLoadingOrders] = useState<boolean>(false);
+  const [statusUpdateError, setStatusUpdateError] = useState<string | null>(null);
+
+  const isAuthorized = isAdminAuthenticated || isAuthFromContext;
+
+  const fetchAdminOrders = useCallback(async () => {
+    if (!isAuthorized) return;
+    try {
+      setIsLoadingOrders(true);
+      const res = await adminFetch('/api/admin/orders');
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data)) {
+          setAdminOrders(data);
+        }
+      } else {
+        console.warn('[AdminPortal] Could not load orders from /api/admin/orders:', res.statusText);
+      }
+    } catch (err) {
+      console.error('[AdminPortal] Error loading admin orders:', err);
+    } finally {
+      setIsLoadingOrders(false);
+    }
+  }, [isAuthorized, adminFetch]);
+
+  useEffect(() => {
+    if (isAuthorized) {
+      fetchAdminOrders();
+      const interval = setInterval(fetchAdminOrders, 5000);
+      return () => clearInterval(interval);
+    }
+  }, [isAuthorized, fetchAdminOrders]);
+
+  const handleAdminUpdateOrderStatus = async (orderId: string, newStatus: OrderStatus, note?: string) => {
+    try {
+      setStatusUpdateError(null);
+      const res = await adminFetch(`/api/admin/orders/${encodeURIComponent(orderId)}/status`, {
+        method: 'PATCH',
+        body: JSON.stringify({ status: newStatus, note }),
+      });
+
+      if (res.ok) {
+        const updatedOrder: Order = await res.json();
+        setAdminOrders((prev) => prev.map((o) => (o.id === orderId ? updatedOrder : o)));
+        soundService.playChime('notification');
+      } else {
+        const errData = await res.json().catch(() => ({}));
+        const msg = errData.error || `Server rejected status transition to ${newStatus}`;
+        setStatusUpdateError(msg);
+        alert(`Order Status Update Failed: ${msg}`);
+        // Re-sync with backend to ensure UI matches PostgreSQL source of truth
+        fetchAdminOrders();
+      }
+    } catch (err: any) {
+      console.error('[AdminPortal] Status update error:', err);
+      setStatusUpdateError(err.message || 'Network error updating status');
+      alert(`Order Status Update Failed: ${err.message}`);
+    }
+  };
+
+  const handleAdminCancelOrder = async (orderId: string, reason?: string) => {
+    await handleAdminUpdateOrderStatus(orderId, 'cancelled', reason || 'Cancelled by Admin / Wrongly placed');
+  };
+
+  const handleAdminDeleteOrder = async (orderId: string) => {
+    try {
+      const res = await adminFetch(`/api/admin/orders/${encodeURIComponent(orderId)}`, {
+        method: 'DELETE',
+      });
+      if (res.ok) {
+        setAdminOrders((prev) => prev.filter((o) => o.id !== orderId));
+        soundService.playChime('pop');
+      } else {
+        const errData = await res.json().catch(() => ({}));
+        alert(errData.error || 'Failed to delete order');
+      }
+    } catch (err: any) {
+      alert(`Failed to delete order: ${err.message}`);
+    }
+  };
+
+  const handleAdminDeleteKot = async (orderId: string) => {
+    try {
+      await adminFetch(`/api/kots/${encodeURIComponent(orderId)}`, { method: 'DELETE' });
+    } catch (err) {
+      console.warn('Failed to delete KOT ticket:', err);
+    }
+    setAdminOrders((prev) =>
+      prev.map((ord) => {
+        if (ord.id === orderId) {
+          const { kotNumber, kotStation, ...rest } = ord;
+          return {
+            ...rest,
+            kotNumber: undefined,
+            kotStation: undefined,
+          };
+        }
+        return ord;
+      })
+    );
+    soundService.playChime('pop');
+  };
+
+  const handleLogout = () => {
+    logoutAdmin();
+    authLogout();
+  };
 
   const [pinInput, setPinInput] = useState('');
   const [loginError, setLoginError] = useState('');
@@ -308,15 +417,15 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ onBackToMenu }) => {
   }
 
   // Filtered orders
-  const filteredOrders = orders.filter((o) => {
+  const filteredOrders = adminOrders.filter((o) => {
     if (orderStatusFilter === 'all') return true;
     return o.status === orderStatusFilter;
   });
 
   // Calculate quick analytics
-  const totalRevenue = orders.reduce((sum, o) => sum + (o.paymentStatus === 'paid' ? o.grandTotal : 0), 0);
-  const totalOrdersCount = orders.length;
-  const activeOrdersCount = orders.filter((o) => o.status !== 'delivered' && o.status !== 'cancelled').length;
+  const totalRevenue = adminOrders.reduce((sum, o) => sum + (o.paymentStatus === 'paid' ? o.grandTotal : 0), 0);
+  const totalOrdersCount = adminOrders.length;
+  const activeOrdersCount = adminOrders.filter((o) => o.status !== 'delivered' && o.status !== 'cancelled').length;
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6">
@@ -416,7 +525,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ onBackToMenu }) => {
           </button>
 
           <button
-            onClick={logoutAdmin}
+            onClick={handleLogout}
             className="p-2 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 transition"
             title="Lock & Logout Admin"
           >
@@ -525,7 +634,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ onBackToMenu }) => {
                                 type="button"
                                 onClick={() => {
                                   if (window.confirm(`Delete KOT ${ord.kotNumber} for Order #${ord.id}?`)) {
-                                    deleteKot(ord.id);
+                                    handleAdminDeleteKot(ord.id);
                                   }
                                 }}
                                 title="Delete/Remove KOT ticket"
@@ -656,7 +765,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ onBackToMenu }) => {
                       <div className="grid grid-cols-2 gap-2">
                         {ord.status === 'placed' && (
                           <button
-                            onClick={() => updateOrderStatus(ord.id, 'baking', 'Kitchen started preparing')}
+                            onClick={() => handleAdminUpdateOrderStatus(ord.id, 'baking', 'Kitchen started preparing')}
                             className="col-span-2 py-2 px-3 rounded-xl bg-amber-500 hover:bg-amber-600 text-white font-bold text-xs shadow-xs transition"
                           >
                             Accept & Start Baking 🔥
@@ -665,7 +774,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ onBackToMenu }) => {
 
                         {ord.status === 'baking' && (
                           <button
-                            onClick={() => updateOrderStatus(ord.id, 'packing', 'Items baked, packing in box')}
+                            onClick={() => handleAdminUpdateOrderStatus(ord.id, 'packing', 'Items baked, packing in box')}
                             className="col-span-2 py-2 px-3 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs shadow-xs transition"
                           >
                             Mark Ready & Pack 📦
@@ -674,7 +783,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ onBackToMenu }) => {
 
                         {ord.status === 'packing' && (
                           <button
-                            onClick={() => updateOrderStatus(ord.id, 'out_for_delivery', 'Handed to delivery rider')}
+                            onClick={() => handleAdminUpdateOrderStatus(ord.id, 'out_for_delivery', 'Handed to delivery rider')}
                             className="col-span-2 py-2 px-3 rounded-xl bg-purple-600 hover:bg-purple-700 text-white font-bold text-xs shadow-xs transition"
                           >
                             Dispatch / Hand to Rider 🛵
@@ -683,7 +792,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ onBackToMenu }) => {
 
                         {ord.status === 'out_for_delivery' && (
                           <button
-                            onClick={() => updateOrderStatus(ord.id, 'delivered', 'Order successfully delivered')}
+                            onClick={() => handleAdminUpdateOrderStatus(ord.id, 'delivered', 'Order successfully delivered')}
                             className="col-span-2 py-2 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shadow-xs transition"
                           >
                             Mark Order Delivered ✅
@@ -700,7 +809,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ onBackToMenu }) => {
                           <button
                             onClick={() => {
                               if (window.confirm(`Are you sure you want to cancel Order #${ord.id}?`)) {
-                                cancelOrder(ord.id, 'Cancelled by Admin / Wrongly placed');
+                                handleAdminCancelOrder(ord.id, 'Cancelled by Admin / Wrongly placed');
                               }
                             }}
                             className="col-span-2 py-1.5 px-3 rounded-xl bg-slate-50 hover:bg-rose-50 text-slate-500 hover:text-rose-600 border border-slate-200 hover:border-rose-200 text-[11px] font-semibold transition"
@@ -720,7 +829,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ onBackToMenu }) => {
                           type="button"
                           onClick={() => {
                             if (window.confirm(`Permanently delete Order #${ord.id} and its associated records? This cannot be undone.`)) {
-                              deleteOrder(ord.id);
+                              handleAdminDeleteOrder(ord.id);
                             }
                           }}
                           className="col-span-2 py-1.5 px-3 rounded-xl bg-slate-50 hover:bg-rose-50 text-slate-400 hover:text-rose-700 border border-slate-200 hover:border-rose-300 text-[11px] font-bold transition flex items-center justify-center gap-1.5"
@@ -741,15 +850,15 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ onBackToMenu }) => {
       {/* ================= TAB: ORDER CALENDAR & DATE FILTER ================= */}
       {adminTab === 'calendar' && (
         <OrderCalendarView
-          orders={orders}
+          orders={adminOrders}
           onSelectOrder={(ord) => {
             setOrderStatusFilter('all');
             setAdminTab('orders');
           }}
           onPrintKOT={(ord) => setPrintModalData({ order: ord, type: 'kot' })}
           onPrintBill={(ord) => setPrintModalData({ order: ord, type: 'receipt' })}
-          onDeleteOrder={deleteOrder}
-          onDeleteKOT={deleteKot}
+          onDeleteOrder={handleAdminDeleteOrder}
+          onDeleteKOT={handleAdminDeleteKot}
         />
       )}
 
@@ -1236,18 +1345,18 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ onBackToMenu }) => {
             </div>
 
             <div className="flex items-center gap-2">
-              {orders.length > 0 && (
+              {adminOrders.length > 0 && (
                 <button
-                  onClick={() => setPrintModalData({ order: orders[0], type: 'kot' })}
+                  onClick={() => setPrintModalData({ order: adminOrders[0], type: 'kot' })}
                   className="px-3.5 py-2 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold transition flex items-center gap-1.5 shadow-xs"
                 >
                   <ChefHat className="w-4 h-4" />
                   <span>Test KOT Print</span>
                 </button>
               )}
-              {orders.length > 0 && (
+              {adminOrders.length > 0 && (
                 <button
-                  onClick={() => setPrintModalData({ order: orders[0], type: 'receipt' })}
+                  onClick={() => setPrintModalData({ order: adminOrders[0], type: 'receipt' })}
                   className="px-3.5 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold transition flex items-center gap-1.5 shadow-xs"
                 >
                   <Printer className="w-4 h-4" />
@@ -1399,14 +1508,14 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ onBackToMenu }) => {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 font-medium">
-                  {orders.length === 0 ? (
+                  {adminOrders.length === 0 ? (
                     <tr>
                       <td colSpan={7} className="py-8 text-center text-slate-400">
                         No active orders currently waiting for KOT dispatch.
                       </td>
                     </tr>
                   ) : (
-                    orders.map((ord) => (
+                    adminOrders.map((ord) => (
                       <tr key={ord.id} className="hover:bg-slate-50/70 transition">
                         <td className="py-3 font-mono font-black text-amber-700">
                           {ord.kotNumber ? (
@@ -1416,7 +1525,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ onBackToMenu }) => {
                                 type="button"
                                 onClick={() => {
                                   if (window.confirm(`Delete KOT ${ord.kotNumber} for Order #${ord.id}?`)) {
-                                    deleteKot(ord.id);
+                                    handleAdminDeleteKot(ord.id);
                                   }
                                 }}
                                 title="Delete / Clear KOT Ticket"
@@ -1470,7 +1579,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ onBackToMenu }) => {
                               type="button"
                               onClick={() => {
                                 if (window.confirm(`Permanently delete Order #${ord.id}?`)) {
-                                  deleteOrder(ord.id);
+                                  handleAdminDeleteOrder(ord.id);
                                 }
                               }}
                               className="p-1.5 rounded-lg bg-slate-100 hover:bg-rose-100 text-slate-500 hover:text-rose-600 transition"

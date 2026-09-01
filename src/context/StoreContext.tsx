@@ -51,6 +51,7 @@ interface StoreContextType {
   createOrder: (paymentMethod: PaymentMethod, paymentId?: string) => Promise<Order>;
   updateOrderStatus: (orderId: string, newStatus: OrderStatus, note?: string) => Promise<void>;
   setActiveOrderId: (orderId: string | null) => void;
+  fetchOrderById: (orderId: string) => Promise<Order | null>;
   cancelOrder: (orderId: string, reason?: string) => Promise<void>;
   deleteOrder: (orderId: string) => Promise<void>;
   deleteKot: (orderId: string) => Promise<void>;
@@ -523,7 +524,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     }
   };
 
-  // Update order status (PostgreSQL PATCH /api/orders/:id/status)
+  // Update order status (strictly updates PostgreSQL; no false optimistic updates on failure)
   const updateOrderStatus = useCallback(async (orderId: string, newStatus: OrderStatus, note?: string) => {
     try {
       const res = await fetch(`/api/orders/${encodeURIComponent(orderId)}/status`, {
@@ -535,37 +536,56 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       if (res.ok) {
         const updatedOrder: Order = await res.json();
         setOrders((prev) => prev.map((o) => (o.id === orderId ? updatedOrder : o)));
+        soundService.playChime('notification');
       } else {
-        // Optimistic UI update
-        setOrders((prev) =>
-          prev.map((order) => {
-            if (order.id === orderId) {
-              return {
-                ...order,
-                status: newStatus,
-                statusHistory: [
-                  ...order.statusHistory,
-                  {
-                    status: newStatus,
-                    timestamp: new Date().toISOString(),
-                    note: note || `Status updated to ${newStatus.replace(/_/g, ' ')}`,
-                  },
-                ],
-              };
-            }
-            return order;
-          })
-        );
+        const errData = await res.json().catch(() => ({}));
+        console.error('[StoreContext] Status update failed on server:', errData.error || res.statusText);
       }
-      soundService.playChime('notification');
     } catch (err) {
-      console.error('Error updating order status:', err);
+      console.error('[StoreContext] Error updating order status:', err);
     }
   }, []);
 
   const cancelOrder = async (orderId: string, reason?: string) => {
-    await updateOrderStatus(orderId, 'cancelled', reason || 'Order cancelled by user');
+    try {
+      const res = await fetch(`/api/orders/${encodeURIComponent(orderId)}/cancel`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason: reason || 'Order cancelled by customer' }),
+      });
+      if (res.ok) {
+        const updatedOrder: Order = await res.json();
+        setOrders((prev) => prev.map((o) => (o.id === orderId ? updatedOrder : o)));
+        soundService.playChime('notification');
+      } else {
+        const errData = await res.json().catch(() => ({}));
+        console.error('[StoreContext] Cancel order failed on server:', errData.error || res.statusText);
+      }
+    } catch (err) {
+      console.error('[StoreContext] Error cancelling order:', err);
+    }
   };
+
+  const fetchOrderById = useCallback(async (orderId: string): Promise<Order | null> => {
+    if (!orderId) return null;
+    try {
+      const res = await fetch(`/api/orders/${encodeURIComponent(orderId)}`);
+      if (res.ok) {
+        const ord: Order = await res.json();
+        setOrders((prev) => {
+          const exists = prev.some((o) => o.id === ord.id);
+          if (exists) {
+            return prev.map((o) => (o.id === ord.id ? ord : o));
+          }
+          return [ord, ...prev];
+        });
+        return ord;
+      }
+    } catch (err) {
+      console.error('[StoreContext] Error fetching order by ID:', err);
+    }
+    return null;
+  }, []);
 
   const deleteOrder = async (orderId: string) => {
     try {
@@ -615,7 +635,11 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       });
       if (res.ok) {
         const data = await res.json();
-        if (data.success) {
+        if (data.success && data.token) {
+          localStorage.setItem('starters4u_admin_jwt_token', data.token);
+          if (data.user) {
+            localStorage.setItem('starters4u_admin_user_profile', JSON.stringify(data.user));
+          }
           setIsAdminAuthenticated(true);
           soundService.playChime('success');
           return true;
@@ -623,13 +647,6 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       }
     } catch (err) {
       console.warn('Backend login verification notice, attempting fallback check:', err);
-    }
-
-    // Emergency local fallback if backend is unreachable
-    if (clean === '8888' || clean === 'mozz8888') {
-      setIsAdminAuthenticated(true);
-      soundService.playChime('success');
-      return true;
     }
 
     return false;
@@ -796,6 +813,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         createOrder,
         updateOrderStatus,
         setActiveOrderId,
+        fetchOrderById,
         cancelOrder,
         deleteOrder,
         deleteKot,

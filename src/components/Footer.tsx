@@ -1,8 +1,8 @@
 import React from 'react';
-import { Sparkles, MapPin, Clock, Phone, Heart, Instagram, MessageSquare, ShieldAlert } from 'lucide-react';
+import { Sparkles, MapPin, Clock, Phone, Heart, Instagram, MessageSquare } from 'lucide-react';
 
 interface FooterProps {
-  onNavigate: (view: 'menu' | 'track' | 'admin') => void;
+  onNavigate: (view: 'menu' | 'track') => void;
   onOpenShapeGuide: () => void;
 }
 
@@ -115,11 +115,10 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate, onOpenShapeGuide }) 
                 Live Order Tracking & ETA Map
               </button>
               <button
-                onClick={() => onNavigate('admin')}
-                className="text-left text-amber-400/90 hover:text-amber-300 flex items-center gap-1.5 transition font-semibold pt-1"
+                onClick={onOpenShapeGuide}
+                className="text-left text-zinc-300 hover:text-amber-400 transition"
               >
-                <ShieldAlert className="w-3.5 h-3.5" />
-                Staff Admin Portal Login
+                Korean Pocket Pizza Shapes (R, C, S)
               </button>
             </div>
           </div>

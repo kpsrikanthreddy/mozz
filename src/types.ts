@@ -15,6 +15,7 @@ export type DietaryType = 'veg' | 'non-veg' | 'egg' | 'dessert';
 
 export interface MenuItem {
   id: string;
+  itemCode?: string;
   name: string;
   category: FoodCategory;
   dietary: DietaryType;

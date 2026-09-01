@@ -76,7 +76,7 @@ export const LiveOrderTracker: React.FC<LiveOrderTrackerProps> = ({ onBackToMenu
     activeOrderId,
     activeOrder,
     setActiveOrderId,
-    updateOrderStatus,
+    fetchOrderById,
     cancelOrder,
   } = useStore();
 
@@ -84,6 +84,9 @@ export const LiveOrderTracker: React.FC<LiveOrderTrackerProps> = ({ onBackToMenu
   const [etaRemainingSeconds, setEtaRemainingSeconds] = useState(720); // 12 mins default
   const [isPrintModalOpen, setIsPrintModalOpen] = useState(false);
   const [trackerView, setTrackerView] = useState<'live' | 'calendar'>('live');
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
+  const order = activeOrder || (activeOrderId ? orders.find((o) => o.id === activeOrderId) : orders[0]);
 
   // Live timer countdown
   useEffect(() => {
@@ -93,7 +96,48 @@ export const LiveOrderTracker: React.FC<LiveOrderTrackerProps> = ({ onBackToMenu
     return () => clearInterval(timer);
   }, []);
 
-  const order = activeOrder || orders[0];
+  // Automatic 5-second polling for active order (stops when delivered or cancelled)
+  useEffect(() => {
+    const targetId = order?.id || activeOrderId;
+    if (!targetId) return;
+
+    // Check if order is already in a terminal state
+    if (order && (order.status === 'delivered' || order.status === 'cancelled')) {
+      return;
+    }
+
+    const poll = async () => {
+      try {
+        await fetchOrderById(targetId);
+      } catch (e) {
+        console.warn('[LiveOrderTracker] Poll failed:', e);
+      }
+    };
+
+    // Poll every 5 seconds
+    const interval = setInterval(poll, 5000);
+
+    // Refresh immediately when user switches back to this tab
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        poll();
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [order?.id, order?.status, activeOrderId, fetchOrderById]);
+
+  const handleManualRefresh = async () => {
+    if (!order?.id) return;
+    setIsRefreshing(true);
+    await fetchOrderById(order.id);
+    setIsRefreshing(false);
+  };
 
   const getStageIndex = (status: OrderStatus) => {
     if (status === 'ready_for_pickup') return 4;
@@ -103,31 +147,26 @@ export const LiveOrderTracker: React.FC<LiveOrderTrackerProps> = ({ onBackToMenu
 
   const currentStageIndex = order ? getStageIndex(order.status) : 0;
 
-  const handleSearch = (e: React.FormEvent) => {
+  const handleSearch = async (e: React.FormEvent) => {
     e.preventDefault();
     const clean = searchOrderId.trim().toUpperCase();
+    if (!clean) return;
+
     const found = orders.find((o) => o.id.toUpperCase() === clean);
     if (found) {
       setActiveOrderId(found.id);
       setSearchOrderId('');
-    } else {
-      alert(`Order #${clean} not found. Please check order number.`);
+      return;
     }
-  };
 
-  const advanceStatusDemo = () => {
-    if (!order) return;
-    const orderStatuses: OrderStatus[] = [
-      'placed',
-      'confirmed',
-      'baking',
-      'packing',
-      'out_for_delivery',
-      'delivered',
-    ];
-    const currentIndex = orderStatuses.indexOf(order.status);
-    const nextStatus = orderStatuses[(currentIndex + 1) % orderStatuses.length];
-    updateOrderStatus(order.id, nextStatus, `Live simulation update: ${nextStatus}`);
+    // Try fetching from backend API if not in local cache
+    const fetched = await fetchOrderById(clean);
+    if (fetched) {
+      setActiveOrderId(fetched.id);
+      setSearchOrderId('');
+    } else {
+      alert(`Order #${clean} not found in MOZZ database. Please check your order ID.`);
+    }
   };
 
   const formatTime = (secs: number) => {
@@ -362,17 +401,26 @@ export const LiveOrderTracker: React.FC<LiveOrderTrackerProps> = ({ onBackToMenu
               </div>
             )}
 
-            {/* Demo Fast-Forward Status Simulation Button */}
+            {/* Real-time sync status footer */}
             <div className="mt-4 pt-3 border-t border-slate-200 flex items-center justify-between">
-              <span className="text-[11px] text-slate-500">
-                Interactive Preview Mode: Test status progression
-              </span>
+              <div className="flex items-center gap-2">
+                <span className={`w-2 h-2 rounded-full ${isDelivered || isCancelled ? 'bg-slate-400' : 'bg-emerald-500 animate-ping'}`} />
+                <span className="text-[11px] text-slate-500 font-medium">
+                  {isDelivered
+                    ? 'Order delivered & completed'
+                    : isCancelled
+                    ? 'Order cancelled'
+                    : 'Live synchronized with Kitchen POS'}
+                </span>
+              </div>
               <button
-                onClick={advanceStatusDemo}
-                className="px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold flex items-center gap-1.5 border border-slate-200 transition"
+                onClick={handleManualRefresh}
+                disabled={isRefreshing}
+                className="px-2.5 py-1 rounded-lg bg-slate-50 hover:bg-slate-100 text-slate-600 text-xs font-semibold flex items-center gap-1.5 border border-slate-200 transition disabled:opacity-50"
+                title="Refresh latest status from kitchen"
               >
-                <RefreshCw className="w-3 h-3 text-rose-600" />
-                <span>Simulate Next Stage</span>
+                <RefreshCw className={`w-3 h-3 text-rose-600 ${isRefreshing ? 'animate-spin' : ''}`} />
+                <span>{isRefreshing ? 'Syncing...' : 'Sync'}</span>
               </button>
             </div>
           </div>

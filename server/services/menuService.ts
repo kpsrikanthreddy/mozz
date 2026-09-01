@@ -1,14 +1,17 @@
-import { query, getClient, inMemoryDb, isPostgresRunning } from '../db.js';
+import { query, inMemoryDb, isPostgresRunning } from '../db.js';
 import { MenuItem } from '../../src/types.js';
 import { INITIAL_MENU } from '../../src/data/menuData.js';
+import crypto from 'crypto';
 
 const DEFAULT_RESTAURANT_ID = 'a0000000-0000-0000-0000-000000000001';
 const DEFAULT_BRANCH_ID = 'b0000000-0000-0000-0000-000000000001';
 
 // Helper to map DB row to frontend MenuItem
 export function mapRowToMenuItem(row: any): MenuItem {
+  const itemCode = row.item_code || row.itemCode || row.id;
   const item: MenuItem = {
-    id: row.id,
+    id: row.id || itemCode,
+    itemCode: itemCode,
     name: row.name,
     category: row.category,
     dietary: row.dietary_type || row.dietary || 'veg',
@@ -40,8 +43,8 @@ export async function getMenu(restaurantId: string = DEFAULT_RESTAURANT_ID, bran
   if (isPostgresRunning()) {
     try {
       const sql = branchId
-        ? `SELECT * FROM menu_items WHERE restaurant_id = $1 AND (branch_id = $2 OR branch_id IS NULL) ORDER BY category, name`
-        : `SELECT * FROM menu_items WHERE restaurant_id = $1 ORDER BY category, name`;
+        ? `SELECT * FROM menu_items WHERE restaurant_id = $1 AND (branch_id = $2 OR branch_id IS NULL) ORDER BY category, item_code, name`
+        : `SELECT * FROM menu_items WHERE restaurant_id = $1 ORDER BY category, item_code, name`;
       const params = branchId ? [restaurantId, branchId] : [restaurantId];
       const res = await query(sql, params);
       return res.rows.map(mapRowToMenuItem);
@@ -57,10 +60,13 @@ export async function getMenu(restaurantId: string = DEFAULT_RESTAURANT_ID, bran
   return items.map(mapRowToMenuItem);
 }
 
-export async function getMenuItem(id: string, restaurantId: string = DEFAULT_RESTAURANT_ID): Promise<MenuItem | null> {
+export async function getMenuItem(identifier: string, restaurantId: string = DEFAULT_RESTAURANT_ID): Promise<MenuItem | null> {
   if (isPostgresRunning()) {
     try {
-      const res = await query(`SELECT * FROM menu_items WHERE id = $1 AND restaurant_id = $2 LIMIT 1`, [id, restaurantId]);
+      const res = await query(
+        `SELECT * FROM menu_items WHERE (id::text = $1 OR item_code = $1) AND restaurant_id = $2 LIMIT 1`,
+        [identifier, restaurantId]
+      );
       if (res.rows.length > 0) {
         return mapRowToMenuItem(res.rows[0]);
       }
@@ -70,16 +76,18 @@ export async function getMenuItem(id: string, restaurantId: string = DEFAULT_RES
     }
   }
 
-  const found = inMemoryDb.menu_items.find((item) => item.id === id && item.restaurant_id === restaurantId);
+  const found = inMemoryDb.menu_items.find(
+    (item) => (item.id === identifier || item.item_code === identifier) && item.restaurant_id === restaurantId
+  );
   return found ? mapRowToMenuItem(found) : null;
 }
 
 export async function createMenuItem(
-  item: Partial<MenuItem> & { name: string; category: string; dietary: string },
+  item: Partial<MenuItem> & { name: string; category: string; dietary: string; itemCode?: string },
   restaurantId: string = DEFAULT_RESTAURANT_ID,
   branchId: string = DEFAULT_BRANCH_ID
 ): Promise<MenuItem> {
-  const id = item.id || `item-${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 6)}`;
+  const itemCode = item.itemCode || item.id || `item-${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 6)}`;
   const isPocket = Boolean(item.isPocketPizza);
   const priceR = item.prices?.R ?? (isPocket ? 149 : null);
   const priceC = item.prices?.C ?? (isPocket ? 179 : null);
@@ -91,19 +99,38 @@ export async function createMenuItem(
     try {
       const sql = `
         INSERT INTO menu_items (
-          id, restaurant_id, branch_id, category, name, description, dietary_type,
+          restaurant_id, branch_id, item_code, category, name, description, dietary_type,
           price, price_r, price_c, price_s, is_pocket_pizza, is_popular, is_chef_special,
           spicy_level, in_stock, image_url, badge, created_at, updated_at
         ) VALUES (
           $1, $2, $3, $4, $5, $6, $7,
           $8, $9, $10, $11, $12, $13, $14,
           $15, $16, $17, $18, NOW(), NOW()
-        ) RETURNING *;
+        )
+        ON CONFLICT (restaurant_id, item_code) DO UPDATE SET
+          branch_id = EXCLUDED.branch_id,
+          category = EXCLUDED.category,
+          name = EXCLUDED.name,
+          description = EXCLUDED.description,
+          dietary_type = EXCLUDED.dietary_type,
+          price = EXCLUDED.price,
+          price_r = EXCLUDED.price_r,
+          price_c = EXCLUDED.price_c,
+          price_s = EXCLUDED.price_s,
+          is_pocket_pizza = EXCLUDED.is_pocket_pizza,
+          is_popular = EXCLUDED.is_popular,
+          is_chef_special = EXCLUDED.is_chef_special,
+          spicy_level = EXCLUDED.spicy_level,
+          in_stock = EXCLUDED.in_stock,
+          image_url = EXCLUDED.image_url,
+          badge = EXCLUDED.badge,
+          updated_at = NOW()
+        RETURNING *;
       `;
       const params = [
-        id,
         restaurantId,
         branchId,
+        itemCode,
         item.category,
         item.name,
         item.description || '',
@@ -128,8 +155,14 @@ export async function createMenuItem(
   }
 
   // In-Memory
+  const generatedId = crypto.randomUUID();
+  const existingIdx = inMemoryDb.menu_items.findIndex(
+    (it) => (it.item_code === itemCode || it.id === item.id) && it.restaurant_id === restaurantId
+  );
+
   const newObj = {
-    id,
+    id: existingIdx >= 0 ? inMemoryDb.menu_items[existingIdx].id : generatedId,
+    item_code: itemCode,
     restaurant_id: restaurantId,
     branch_id: branchId,
     category: item.category,
@@ -150,12 +183,18 @@ export async function createMenuItem(
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
   };
-  inMemoryDb.menu_items.push(newObj);
+
+  if (existingIdx >= 0) {
+    inMemoryDb.menu_items[existingIdx] = newObj;
+  } else {
+    inMemoryDb.menu_items.push(newObj);
+  }
+
   return mapRowToMenuItem(newObj);
 }
 
 export async function updateMenuItem(
-  id: string,
+  identifier: string,
   updates: Partial<MenuItem>,
   restaurantId: string = DEFAULT_RESTAURANT_ID
 ): Promise<MenuItem | null> {
@@ -163,7 +202,10 @@ export async function updateMenuItem(
   
   if (isPostgresRunning()) {
     try {
-      const existing = await query(`SELECT * FROM menu_items WHERE id = $1 AND restaurant_id = $2`, [id, restaurantId]);
+      const existing = await query(
+        `SELECT * FROM menu_items WHERE (id::text = $1 OR item_code = $1) AND restaurant_id = $2`,
+        [identifier, restaurantId]
+      );
       if (existing.rows.length === 0) return null;
       const current = existing.rows[0];
 
@@ -222,7 +264,7 @@ export async function updateMenuItem(
         newStock,
         newImage,
         newBadge,
-        id,
+        current.id,
         restaurantId,
       ];
       const res = await query(sql, params);
@@ -233,7 +275,9 @@ export async function updateMenuItem(
   }
 
   // In Memory
-  const idx = inMemoryDb.menu_items.findIndex((item) => item.id === id && item.restaurant_id === restaurantId);
+  const idx = inMemoryDb.menu_items.findIndex(
+    (item) => (item.id === identifier || item.item_code === identifier) && item.restaurant_id === restaurantId
+  );
   if (idx === -1) return null;
 
   const cur = inMemoryDb.menu_items[idx];
@@ -262,7 +306,7 @@ export async function updateMenuItem(
 }
 
 export async function toggleStock(
-  id: string,
+  identifier: string,
   explicitInStock?: boolean,
   restaurantId: string = DEFAULT_RESTAURANT_ID
 ): Promise<MenuItem | null> {
@@ -271,11 +315,11 @@ export async function toggleStock(
       let sql: string;
       let params: any[];
       if (explicitInStock !== undefined) {
-        sql = `UPDATE menu_items SET in_stock = $1, updated_at = NOW() WHERE id = $2 AND restaurant_id = $3 RETURNING *`;
-        params = [explicitInStock, id, restaurantId];
+        sql = `UPDATE menu_items SET in_stock = $1, updated_at = NOW() WHERE (id::text = $2 OR item_code = $2) AND restaurant_id = $3 RETURNING *`;
+        params = [explicitInStock, identifier, restaurantId];
       } else {
-        sql = `UPDATE menu_items SET in_stock = NOT in_stock, updated_at = NOW() WHERE id = $1 AND restaurant_id = $2 RETURNING *`;
-        params = [id, restaurantId];
+        sql = `UPDATE menu_items SET in_stock = NOT in_stock, updated_at = NOW() WHERE (id::text = $1 OR item_code = $1) AND restaurant_id = $2 RETURNING *`;
+        params = [identifier, restaurantId];
       }
       const res = await query(sql, params);
       return res.rows.length > 0 ? mapRowToMenuItem(res.rows[0]) : null;
@@ -285,7 +329,9 @@ export async function toggleStock(
   }
 
   // In-Memory
-  const idx = inMemoryDb.menu_items.findIndex((item) => item.id === id && item.restaurant_id === restaurantId);
+  const idx = inMemoryDb.menu_items.findIndex(
+    (item) => (item.id === identifier || item.item_code === identifier) && item.restaurant_id === restaurantId
+  );
   if (idx === -1) return null;
 
   const current = inMemoryDb.menu_items[idx];
@@ -300,21 +346,24 @@ export async function toggleStock(
 }
 
 export async function updateItemPrice(
-  id: string,
+  identifier: string,
   newPrice: number | { R: number; C: number; S: number },
   restaurantId: string = DEFAULT_RESTAURANT_ID
 ): Promise<MenuItem | null> {
   if (typeof newPrice === 'object' && newPrice !== null) {
-    return updateMenuItem(id, { prices: newPrice, isPocketPizza: true }, restaurantId);
+    return updateMenuItem(identifier, { prices: newPrice, isPocketPizza: true }, restaurantId);
   } else {
-    return updateMenuItem(id, { price: Number(newPrice), isPocketPizza: false }, restaurantId);
+    return updateMenuItem(identifier, { price: Number(newPrice), isPocketPizza: false }, restaurantId);
   }
 }
 
-export async function deleteMenuItem(id: string, restaurantId: string = DEFAULT_RESTAURANT_ID): Promise<boolean> {
+export async function deleteMenuItem(identifier: string, restaurantId: string = DEFAULT_RESTAURANT_ID): Promise<boolean> {
   if (isPostgresRunning()) {
     try {
-      const res = await query(`DELETE FROM menu_items WHERE id = $1 AND restaurant_id = $2`, [id, restaurantId]);
+      const res = await query(
+        `DELETE FROM menu_items WHERE (id::text = $1 OR item_code = $1) AND restaurant_id = $2`,
+        [identifier, restaurantId]
+      );
       return (res.rowCount ?? 0) > 0;
     } catch (err) {
       console.error('[MenuService] Error deleting menu item from PG:', err);
@@ -322,7 +371,9 @@ export async function deleteMenuItem(id: string, restaurantId: string = DEFAULT_
   }
 
   const initialLen = inMemoryDb.menu_items.length;
-  inMemoryDb.menu_items = inMemoryDb.menu_items.filter((item) => !(item.id === id && item.restaurant_id === restaurantId));
+  inMemoryDb.menu_items = inMemoryDb.menu_items.filter(
+    (item) => !((item.id === identifier || item.item_code === identifier) && item.restaurant_id === restaurantId)
+  );
   return inMemoryDb.menu_items.length < initialLen;
 }
 
@@ -334,7 +385,7 @@ export async function resetMenuToDefault(
     try {
       await query(`DELETE FROM menu_items WHERE restaurant_id = $1`, [restaurantId]);
       for (const item of INITIAL_MENU) {
-        await createMenuItem(item, restaurantId, branchId);
+        await createMenuItem({ ...item, itemCode: item.id }, restaurantId, branchId);
       }
       return getMenu(restaurantId, branchId);
     } catch (err) {
@@ -343,7 +394,8 @@ export async function resetMenuToDefault(
   }
 
   inMemoryDb.menu_items = INITIAL_MENU.map((item) => ({
-    id: item.id,
+    id: crypto.randomUUID(),
+    item_code: item.id,
     restaurant_id: restaurantId,
     branch_id: branchId,
     category: item.category,
