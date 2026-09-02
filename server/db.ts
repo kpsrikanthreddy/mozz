@@ -18,9 +18,18 @@ let isPostgresActive = false;
 // Default admin bcrypt hash (cost 10) for PIN 8888
 const DEFAULT_ADMIN_BCRYPT = bcrypt.hashSync('8888', 10);
 
-// Reusable Database connection module
+// Global declarations for serverless / warm invocation reuse
+declare global {
+  var __pgPool: pg.Pool | undefined;
+  var __isPostgresActive: boolean | undefined;
+  var __dbInitPromise: Promise<{ success: boolean; mode: string; error?: string }> | undefined;
+}
+
+// Reusable Database connection module with global caching for serverless environments
 export function getDbPool(): pg.Pool | null {
-  if (pool) return pool;
+  if (globalThis.__pgPool) {
+    return globalThis.__pgPool;
+  }
 
   if (!DATABASE_URL) {
     console.info('[DB] DATABASE_URL not detected in environment variables. Running with in-memory persistence fallback.');
@@ -29,19 +38,20 @@ export function getDbPool(): pg.Pool | null {
 
   try {
     const isLocal = DATABASE_URL.includes('localhost') || DATABASE_URL.includes('127.0.0.1');
-    pool = new Pool({
+    const newPool = new Pool({
       connectionString: DATABASE_URL,
       ssl: isLocal ? false : { rejectUnauthorized: false },
-      max: 20, // Max clients in pool
+      max: parseInt(process.env.PG_MAX_POOL || '10', 10), // Max clients in pool
       idleTimeoutMillis: 30000,
-      connectionTimeoutMillis: 5000,
+      connectionTimeoutMillis: 10000,
     });
 
-    pool.on('error', (err) => {
+    newPool.on('error', (err) => {
       console.error('[DB] Unexpected error on idle PostgreSQL client:', err);
     });
 
-    return pool;
+    globalThis.__pgPool = newPool;
+    return newPool;
   } catch (err) {
     console.error('[DB] Failed to initialize PostgreSQL pool:', err);
     return null;
@@ -340,46 +350,56 @@ function executeInMemoryQuery(text: string, params: any[] = []): { rows: any[]; 
 }
 
 // Initialize and auto-migrate PostgreSQL on startup if DATABASE_URL is present
-export async function initializeDatabase() {
-  const currentPool = getDbPool();
-  if (!currentPool) {
-    console.info('[DB] Running with in-memory multi-tenant storage.');
-    return { success: true, mode: 'in_memory' };
+export async function initializeDatabase(): Promise<{ success: boolean; mode: string; error?: string }> {
+  if (globalThis.__dbInitPromise) {
+    return globalThis.__dbInitPromise;
   }
 
-  try {
-    const client = await currentPool.connect();
-    try {
-      console.info('[DB] Successfully connected to PostgreSQL instance.');
-      isPostgresActive = true;
-
-      // Run schema initialization (Creates or modifies existing tables, columns, constraints, triggers, indexes)
-      const schemaPath = path.join(process.cwd(), 'database', 'schema.sql');
-      if (fs.existsSync(schemaPath)) {
-        const schemaSql = fs.readFileSync(schemaPath, 'utf-8');
-        await client.query(schemaSql);
-        console.info('[DB] PostgreSQL multi-tenant schema verified/applied (created or modified objects).');
-      }
-
-      // Apply seed script (Idempotently creates or modifies base restaurant, branch, tables, categories & menu items)
-      const seedPath = path.join(process.cwd(), 'database', 'seed.sql');
-      if (fs.existsSync(seedPath)) {
-        const seedSql = fs.readFileSync(seedPath, 'utf-8');
-        await client.query(seedSql);
-        console.info('[DB] Seed data verified/applied (created or modified existing objects).');
-      }
-
-      return { success: true, mode: 'postgresql' };
-    } finally {
-      client.release();
+  globalThis.__dbInitPromise = (async () => {
+    const currentPool = getDbPool();
+    if (!currentPool) {
+      console.info('[DB] Running with in-memory multi-tenant storage.');
+      return { success: true, mode: 'in_memory' };
     }
-  } catch (err: any) {
-    console.warn('[DB] Could not connect to PostgreSQL with DATABASE_URL, continuing with in-memory store:', err.message);
-    isPostgresActive = false;
-    return { success: false, mode: 'in_memory', error: err.message };
-  }
+
+    try {
+      const client = await currentPool.connect();
+      try {
+        console.info('[DB] Successfully connected to PostgreSQL instance.');
+        isPostgresActive = true;
+        globalThis.__isPostgresActive = true;
+
+        // Run schema initialization (Creates or modifies existing tables, columns, constraints, triggers, indexes)
+        const schemaPath = path.join(process.cwd(), 'database', 'schema.sql');
+        if (fs.existsSync(schemaPath)) {
+          const schemaSql = fs.readFileSync(schemaPath, 'utf-8');
+          await client.query(schemaSql);
+          console.info('[DB] PostgreSQL multi-tenant schema verified/applied (created or modified objects).');
+        }
+
+        // Apply seed script (Idempotently creates or modifies base restaurant, branch, tables, categories & menu items)
+        const seedPath = path.join(process.cwd(), 'database', 'seed.sql');
+        if (fs.existsSync(seedPath)) {
+          const seedSql = fs.readFileSync(seedPath, 'utf-8');
+          await client.query(seedSql);
+          console.info('[DB] Seed data verified/applied (created or modified existing objects).');
+        }
+
+        return { success: true, mode: 'postgresql' };
+      } finally {
+        client.release();
+      }
+    } catch (err: any) {
+      console.warn('[DB] Could not connect to PostgreSQL with DATABASE_URL, continuing with in-memory store:', err.message);
+      isPostgresActive = false;
+      globalThis.__isPostgresActive = false;
+      return { success: false, mode: 'in_memory', error: err.message };
+    }
+  })();
+
+  return globalThis.__dbInitPromise;
 }
 
 export function isPostgresRunning(): boolean {
-  return isPostgresActive;
+  return globalThis.__isPostgresActive ?? isPostgresActive;
 }
