@@ -5,7 +5,7 @@ const RESTAURANT_ID = 'mozz';
 const QR_SIGNING_SALT = 'mozz_pizzateria_secure_qr_key_v1_2026';
 
 // Canonical base domain
-export const CANONICAL_BASE_URL = 'https://starters4u.in';
+export const CANONICAL_BASE_URL = 'https://www.starters4u.in';
 
 // Simple deterministic HMAC-SHA256 / Hash implementation for browser & node compatibility
 function simpleHmacSha256(data: string, key: string): string {

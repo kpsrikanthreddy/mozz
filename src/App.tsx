@@ -13,83 +13,186 @@ import { CustomerDetailsModal } from './components/CustomerDetailsModal';
 import { Footer } from './components/Footer';
 import { AdminApp } from './components/admin/AdminApp';
 import { PlatformAdminApp } from './components/admin/PlatformAdminApp';
+import { HomePage } from './pages/HomePage';
+import { MenuPage } from './pages/MenuPage';
+import { CategoryPage } from './pages/CategoryPage';
+import { AboutPage } from './pages/AboutPage';
+import { ContactPage } from './pages/ContactPage';
+import { DeliveryPage } from './pages/DeliveryPage';
+import { PolicyPage } from './pages/PolicyPage';
+import { NotFoundPage } from './pages/NotFoundPage';
+import { getRouteConfig, PUBLIC_ROUTES } from './routes';
 import { FoodCategory, Order } from './types';
 import { ShoppingBag, ArrowRight } from 'lucide-react';
 
+interface CustomerAppProps {
+  currentPath: string;
+  onNavigatePath: (path: string) => void;
+}
+
 /**
  * Customer Website Application
- * Completely dedicated to customer ordering (Takeaway, Delivery, Table Dine-In QR)
+ * Supports both SEO-optimized static pre-rendered routes and interactive ordering
  */
-const CustomerApp: React.FC = () => {
+const CustomerApp: React.FC<CustomerAppProps> = ({ currentPath, onNavigatePath }) => {
   const {
     itemCount,
     grandTotal,
     setIsCartOpen,
-    activeOrder,
     isCustomerModalOpen,
     setIsCustomerModalOpen,
   } = useStore();
 
-  const [currentView, setCurrentView] = useState<'menu' | 'track'>('menu');
-  const [selectedCategory, setSelectedCategory] = useState<FoodCategory | 'all'>('all');
+  const [currentView, setCurrentView] = useState<'page' | 'track'>(() => {
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get('view') === 'track' || window.location.pathname === '/track') {
+        return 'track';
+      }
+    }
+    return 'page';
+  });
+
   const [isShapeGuideOpen, setIsShapeGuideOpen] = useState(false);
   const [isCheckoutOpen, setIsCheckoutOpen] = useState(false);
 
-  const handleSelectCategoryFromHero = (cat: FoodCategory) => {
-    setSelectedCategory(cat);
-    setCurrentView('menu');
-    setTimeout(() => {
-      const el = document.getElementById('menu-section');
-      if (el) {
-        el.scrollIntoView({ behavior: 'smooth' });
-      }
-    }, 100);
-  };
+  // Sync view state if URL query has ?view=track
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const handlePop = () => {
+        const params = new URLSearchParams(window.location.search);
+        if (params.get('view') === 'track' || window.location.pathname === '/track') {
+          setCurrentView('track');
+        } else {
+          setCurrentView('page');
+        }
+      };
+      window.addEventListener('popstate', handlePop);
+      return () => window.removeEventListener('popstate', handlePop);
+    }
+  }, []);
 
   const handleOrderCompleted = (createdOrder: Order) => {
     setIsCheckoutOpen(false);
     setCurrentView('track');
+    if (typeof window !== 'undefined') {
+      window.history.pushState({}, '', '/?view=track');
+    }
+  };
+
+  // Find SEO route config
+  const normalizedPath = currentPath.split('?')[0].replace(/\/$/, '') || '/';
+  const routeConfig = getRouteConfig(normalizedPath);
+
+  // Render the appropriate main content based on route
+  const renderMainContent = () => {
+    if (currentView === 'track' || normalizedPath === '/track') {
+      return (
+        <LiveOrderTracker
+          onBackToMenu={() => {
+            setCurrentView('page');
+            onNavigatePath('/menu');
+          }}
+        />
+      );
+    }
+
+    if (!routeConfig) {
+      // Dynamic QR direct entry paths (e.g. /r/*, /table/*, /counter)
+      if (
+        normalizedPath.startsWith('/r/') ||
+        normalizedPath.startsWith('/table/') ||
+        normalizedPath.startsWith('/counter')
+      ) {
+        return (
+          <>
+            <BannerPromise
+              onSelectCategory={() => {
+                const el = document.getElementById('menu-section');
+                if (el) el.scrollIntoView({ behavior: 'smooth' });
+              }}
+              onOpenShapeGuide={() => setIsShapeGuideOpen(true)}
+            />
+            <MenuSection
+              selectedCategory="all"
+              onSelectCategory={() => {}}
+              onOpenShapeGuide={() => setIsShapeGuideOpen(true)}
+            />
+          </>
+        );
+      }
+      return <NotFoundPage />;
+    }
+
+    switch (routeConfig.path) {
+      case '/':
+        return (
+          <HomePage
+            routeConfig={routeConfig}
+            onOpenShapeGuide={() => setIsShapeGuideOpen(true)}
+          />
+        );
+
+      case '/menu':
+        return <MenuPage routeConfig={routeConfig} />;
+
+      case '/chinese-restaurant-gachibowli':
+      case '/chinese-starters-gachibowli':
+      case '/veg-starters-gachibowli':
+      case '/non-veg-starters-gachibowli':
+      case '/pizza-gachibowli':
+      case '/korean-pocket-pizza-hyderabad':
+      case '/momos-gachibowli':
+        return <CategoryPage routeConfig={routeConfig} />;
+
+      case '/about':
+        return <AboutPage routeConfig={routeConfig} />;
+
+      case '/contact':
+        return <ContactPage routeConfig={routeConfig} />;
+
+      case '/delivery-information':
+        return <DeliveryPage routeConfig={routeConfig} />;
+
+      case '/privacy-policy':
+      case '/terms-and-conditions':
+      case '/refund-and-cancellation-policy':
+        return <PolicyPage routeConfig={routeConfig} />;
+
+      default:
+        return <NotFoundPage />;
+    }
   };
 
   return (
-    <div className="min-h-screen bg-[#F8F9FA] text-slate-800 flex flex-col font-sans selection:bg-rose-500 selection:text-white">
-      {/* Top Customer Navigation (Admin buttons removed) */}
+    <div className="min-h-screen bg-stone-50 text-stone-800 flex flex-col font-sans selection:bg-rose-500 selection:text-white">
+      {/* Top Customer Navigation */}
       <Navbar
-        currentView={currentView}
+        currentView={currentView === 'track' ? 'track' : 'menu'}
         onNavigate={(view) => {
-          if (view === 'menu' || view === 'track') {
-            setCurrentView(view);
+          if (view === 'track') {
+            setCurrentView('track');
+            onNavigatePath('/?view=track');
+          } else {
+            setCurrentView('page');
+            onNavigatePath('/menu');
           }
         }}
         onOpenShapeGuide={() => setIsShapeGuideOpen(true)}
       />
 
-      {/* Main Customer View */}
-      <main className="flex-1">
-        {currentView === 'menu' && (
-          <>
-            <BannerPromise
-              onSelectCategory={handleSelectCategoryFromHero}
-              onOpenShapeGuide={() => setIsShapeGuideOpen(true)}
-            />
-            <MenuSection
-              selectedCategory={selectedCategory}
-              onSelectCategory={setSelectedCategory}
-              onOpenShapeGuide={() => setIsShapeGuideOpen(true)}
-            />
-          </>
-        )}
+      {/* Main Page Body */}
+      <main className="flex-1">{renderMainContent()}</main>
 
-        {currentView === 'track' && (
-          <LiveOrderTracker onBackToMenu={() => setCurrentView('menu')} />
-        )}
-      </main>
-
-      {/* Customer Footer */}
+      {/* Customer Footer with verified business info and crawlable internal links */}
       <Footer
         onNavigate={(view) => {
-          if (view === 'menu' || view === 'track') {
-            setCurrentView(view);
+          if (view === 'track') {
+            setCurrentView('track');
+            onNavigatePath('/?view=track');
+          } else {
+            setCurrentView('page');
+            onNavigatePath('/menu');
           }
         }}
         onOpenShapeGuide={() => setIsShapeGuideOpen(true)}
@@ -122,14 +225,14 @@ const CustomerApp: React.FC = () => {
       />
 
       {/* Floating Mobile Cart Bar */}
-      {itemCount > 0 && currentView === 'menu' && (
+      {itemCount > 0 && currentView !== 'track' && (
         <div className="sm:hidden fixed bottom-4 inset-x-4 z-40 animate-in slide-in-from-bottom duration-200">
           <button
             onClick={() => setIsCartOpen(true)}
             className="w-full py-3.5 px-5 rounded-2xl bg-gradient-to-r from-rose-600 via-rose-500 to-amber-500 text-white font-black text-sm shadow-xl shadow-rose-900/20 flex items-center justify-between border border-rose-400/30 active:scale-[0.98] transition cursor-pointer"
           >
             <div className="flex items-center gap-2">
-              <div className="w-6 h-6 rounded-full bg-white text-rose-600 text-xs flex items-center justify-center font-black shadow-sm">
+              <div className="w-6 h-6 rounded-full bg-white text-rose-600 text-xs flex items-center justify-center font-black shadow-xs">
                 {itemCount}
               </div>
               <span className="text-white font-bold">View Cart</span>
@@ -145,8 +248,9 @@ const CustomerApp: React.FC = () => {
   );
 };
 
-export default function App() {
+export default function App({ initialPath }: { initialPath?: string }) {
   const [currentPath, setCurrentPath] = useState(() => {
+    if (initialPath) return initialPath;
     if (typeof window !== 'undefined') {
       return window.location.pathname;
     }
@@ -160,15 +264,60 @@ export default function App() {
     return '';
   });
 
+  // Client-side routing with popstate and delegated link interceptor
   useEffect(() => {
+    if (typeof window === 'undefined') return;
+
     const handleLocationChange = () => {
       setCurrentPath(window.location.pathname);
       setCurrentHost(window.location.hostname);
     };
 
     window.addEventListener('popstate', handleLocationChange);
-    return () => window.removeEventListener('popstate', handleLocationChange);
+
+    // Delegated click listener for internal `<a href="/...">` links
+    const handleDocumentClick = (e: MouseEvent) => {
+      const target = (e.target as HTMLElement).closest('a');
+      if (!target) return;
+
+      const href = target.getAttribute('href');
+      if (!href) return;
+
+      // Only handle internal relative links (starting with single '/')
+      if (
+        href.startsWith('/') &&
+        !href.startsWith('//') &&
+        !href.startsWith('/api') &&
+        !target.getAttribute('download') &&
+        target.getAttribute('target') !== '_blank'
+      ) {
+        // Allow standard modifier keys (Ctrl, Cmd, Shift, Alt) for opening in new tab
+        if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) {
+          return;
+        }
+
+        e.preventDefault();
+        window.history.pushState({}, '', href);
+        setCurrentPath(href.split('?')[0]);
+        window.scrollTo(0, 0);
+      }
+    };
+
+    document.addEventListener('click', handleDocumentClick);
+
+    return () => {
+      window.removeEventListener('popstate', handleLocationChange);
+      document.removeEventListener('click', handleDocumentClick);
+    };
   }, []);
+
+  const navigateTo = (path: string) => {
+    if (typeof window !== 'undefined') {
+      window.history.pushState({}, '', path);
+      setCurrentPath(path.split('?')[0]);
+      window.scrollTo(0, 0);
+    }
+  };
 
   // Determine application mode based on path and subdomain
   const isPlatformAdmin = currentPath.startsWith('/platform-admin');
@@ -185,7 +334,7 @@ export default function App() {
         ) : isAdminPortal ? (
           <AdminApp />
         ) : (
-          <CustomerApp />
+          <CustomerApp currentPath={currentPath} onNavigatePath={navigateTo} />
         )}
       </AdminAuthProvider>
     </StoreProvider>

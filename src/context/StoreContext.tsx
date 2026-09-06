@@ -97,28 +97,15 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [menu, setMenu] = useState<MenuItem[]>(INITIAL_MENU);
   const [isLoadingMenu, setIsLoadingMenu] = useState(false);
 
-  // Cart state (stored in local storage for session durability)
-  const [cart, setCart] = useState<CartItem[]>(() => {
-    try {
-      const saved = localStorage.getItem(LOCAL_STORAGE_KEY_CART);
-      return saved ? JSON.parse(saved) : [];
-    } catch {
-      return [];
-    }
-  });
+  // Cart state (hydration-safe: starts empty on initial render, hydrated via useEffect)
+  const [cart, setCart] = useState<CartItem[]>([]);
 
   // Orders state loaded from PostgreSQL API
   const [orders, setOrders] = useState<Order[]>([]);
   const [isLoadingOrders, setIsLoadingOrders] = useState(false);
 
   // Active tracked order ID
-  const [activeOrderId, setActiveOrderId] = useState<string | null>(() => {
-    try {
-      return localStorage.getItem(LOCAL_STORAGE_KEY_ACTIVE_ORDER) || 'MOZZ-8901';
-    } catch {
-      return 'MOZZ-8901';
-    }
-  });
+  const [activeOrderId, setActiveOrderId] = useState<string | null>('MOZZ-8901');
 
   // Entry Source & Signed QR Session State
   const [qrSession, setQrSession] = useState<QRSessionInfo>(() => {
@@ -148,23 +135,38 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [soundEnabled, setSoundEnabled] = useState(true);
 
   // Admin Authentication state
-  const [isAdminAuthenticated, setIsAdminAuthenticated] = useState<boolean>(() => {
-    try {
-      return localStorage.getItem(LOCAL_STORAGE_KEY_ADMIN) === 'true';
-    } catch {
-      return false;
-    }
-  });
+  const [isAdminAuthenticated, setIsAdminAuthenticated] = useState<boolean>(false);
 
   // Customer details
-  const [customerDetails, setCustomerDetailsState] = useState<CustomerDetails>(() => {
+  const [customerDetails, setCustomerDetailsState] = useState<CustomerDetails>(INITIAL_CUSTOMER);
+
+  // Client-side hydration of persisted localStorage values (guarantees zero hydration mismatch)
+  useEffect(() => {
     try {
-      const saved = localStorage.getItem(LOCAL_STORAGE_KEY_CUSTOMER);
-      return saved ? JSON.parse(saved) : INITIAL_CUSTOMER;
-    } catch {
-      return INITIAL_CUSTOMER;
-    }
-  });
+      const savedCart = localStorage.getItem(LOCAL_STORAGE_KEY_CART);
+      if (savedCart) {
+        const parsed = JSON.parse(savedCart);
+        if (Array.isArray(parsed)) setCart(parsed);
+      }
+    } catch {}
+
+    try {
+      const savedOrder = localStorage.getItem(LOCAL_STORAGE_KEY_ACTIVE_ORDER);
+      if (savedOrder) setActiveOrderId(savedOrder);
+    } catch {}
+
+    try {
+      const savedCustomer = localStorage.getItem(LOCAL_STORAGE_KEY_CUSTOMER);
+      if (savedCustomer) {
+        setCustomerDetailsState(JSON.parse(savedCustomer));
+      }
+    } catch {}
+
+    try {
+      const savedAdmin = localStorage.getItem(LOCAL_STORAGE_KEY_ADMIN);
+      if (savedAdmin === 'true') setIsAdminAuthenticated(true);
+    } catch {}
+  }, []);
 
   // ==========================================================
   // API DATA FETCHING (PostgreSQL as Source of Truth)

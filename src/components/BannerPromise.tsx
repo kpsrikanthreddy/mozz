@@ -26,14 +26,20 @@ export const BannerPromise: React.FC<BannerPromiseProps> = ({
               MOZZ
             </div>
 
-            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-rose-500/20 border border-rose-400/30 text-rose-300 text-xs font-bold uppercase tracking-wider mb-4">
+            <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-rose-950/40 border border-rose-900/60 text-rose-300 text-xs font-bold uppercase tracking-wider mb-3">
               <Sparkles className="w-3.5 h-3.5 text-amber-400" />
-              Introducing Korean-Style Pocket Pizzas
+              <span>Introducing Korean-Style Pocket Pizzas</span>
             </div>
 
-            <h1 className="text-3xl sm:text-4xl font-black text-white tracking-tight leading-tight mb-3">
+            {/* Subtle branding & ordering context */}
+            <div className="text-xs sm:text-sm font-medium text-slate-400 tracking-wide mb-3 flex items-center gap-2">
+              <span className="w-1.5 h-1.5 rounded-full bg-rose-500"></span>
+              <span>Order Online from MOZZ Chinese & Pizzateria on Starters4U</span>
+            </div>
+
+            <h1 className="text-3xl sm:text-4xl lg:text-5xl font-black text-white tracking-tight leading-tight mb-3">
               Freshly Baked.{' '}
-              <span className="bg-gradient-to-r from-rose-400 via-amber-300 to-amber-200 bg-clip-text text-transparent">
+              <span className="bg-gradient-to-r from-[#FF4B72] via-[#FF8533] to-[#FACC15] bg-clip-text text-transparent">
                 Loaded with Love.
               </span>
             </h1>
@@ -43,64 +49,22 @@ export const BannerPromise: React.FC<BannerPromiseProps> = ({
             </p>
 
             {/* CTAs */}
-            <div className="flex flex-wrap items-center gap-3 mb-6">
+            <div className="flex flex-wrap items-center gap-3">
               <button
                 onClick={() => onSelectCategory('pocket_pizza_veg')}
-                className="px-6 py-3 rounded-xl bg-gradient-to-r from-rose-600 to-amber-600 hover:from-rose-500 hover:to-amber-500 text-white font-bold text-sm shadow-md shadow-rose-950/20 flex items-center gap-2 transition"
+                className="px-6 py-3.5 rounded-xl bg-gradient-to-r from-[#E1144B] to-[#EA580C] hover:from-[#D01042] hover:to-[#D94E08] text-white font-bold text-sm shadow-md shadow-rose-950/30 flex items-center gap-2 transition duration-200 cursor-pointer"
               >
-                Order Pocket Pizzas
+                <span>Order Pocket Pizzas</span>
                 <ArrowRight className="w-4 h-4" />
               </button>
 
               <button
                 onClick={() => onSelectCategory('chinese_starters')}
-                className="px-6 py-3 rounded-xl bg-gradient-to-r from-rose-600 to-amber-600 hover:from-rose-500 hover:to-amber-500 text-white font-bold text-sm shadow-md shadow-rose-950/20 flex items-center gap-2 transition"
+                className="px-6 py-3.5 rounded-xl bg-gradient-to-r from-[#E1144B] to-[#EA580C] hover:from-[#D01042] hover:to-[#D94E08] text-white font-bold text-sm shadow-md shadow-rose-950/30 flex items-center gap-2 transition duration-200 cursor-pointer"
               >
-                Order MOZZ Chinese Special
+                <span>Order MOZZ Chinese Special</span>
                 <ArrowRight className="w-4 h-4" />
               </button>
-            </div>
-
-            {/* Shape selection badge banner */}
-            <div className="bg-slate-950/60 border border-slate-800 rounded-2xl p-3 sm:p-4">
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-xs font-bold text-amber-400 uppercase tracking-wider flex items-center gap-1.5">
-                  <Layers className="w-3.5 h-3.5" />
-                  Available in 3 Shapes
-                </span>
-                <button
-                  onClick={onOpenShapeGuide}
-                  className="text-xs text-slate-300 hover:text-amber-300 underline transition"
-                >
-                  View Shape Guide
-                </button>
-              </div>
-
-              <div className="grid grid-cols-3 gap-2 text-center">
-                <div
-                  onClick={() => onSelectCategory('pocket_pizza_veg')}
-                  className="p-2 rounded-xl bg-slate-900/90 border border-slate-800 hover:border-amber-500/50 cursor-pointer transition"
-                >
-                  <div className="text-amber-400 font-extrabold text-xs">[R] Rectangular</div>
-                  <div className="text-[10px] text-slate-400">Regular • Bigger Bites</div>
-                </div>
-
-                <div
-                  onClick={() => onSelectCategory('pocket_pizza_nonveg')}
-                  className="p-2 rounded-xl bg-rose-500/20 border border-rose-500/40 hover:border-rose-400 cursor-pointer transition"
-                >
-                  <div className="text-rose-200 font-extrabold text-xs">[C] Circular</div>
-                  <div className="text-[10px] text-slate-200">Classic • Most Popular</div>
-                </div>
-
-                <div
-                  onClick={() => onSelectCategory('dessert_pizza')}
-                  className="p-2 rounded-xl bg-slate-900/90 border border-slate-800 hover:border-amber-500/50 cursor-pointer transition"
-                >
-                  <div className="text-amber-400 font-extrabold text-xs">[S] Square</div>
-                  <div className="text-[10px] text-slate-400">Signature • Perfect Share</div>
-                </div>
-              </div>
             </div>
           </div>
 

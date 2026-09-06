@@ -12,6 +12,7 @@ export type FoodCategory =
   | 'drinks';
 
 export type DietaryType = 'veg' | 'non-veg' | 'egg' | 'dessert';
+export type Dietary = DietaryType;
 
 export interface MenuItem {
   id: string;
