@@ -1,5 +1,19 @@
 {
   "version": 2,
+  "headers": [
+    {
+      "source": "/(admin|restaurant-admin|platform-admin)(.*)",
+      "headers": [{ "key": "X-Robots-Tag", "value": "noindex, nofollow, noarchive" }]
+    },
+    {
+      "source": "/api/(.*)",
+      "headers": [{ "key": "X-Robots-Tag", "value": "noindex, nofollow, noarchive" }]
+    },
+    {
+      "source": "/(r|table|counter)(.*)",
+      "headers": [{ "key": "X-Robots-Tag", "value": "noindex, nofollow, noarchive" }]
+    }
+  ],
   "rewrites": [
     {
       "source": "/api/(.*)",

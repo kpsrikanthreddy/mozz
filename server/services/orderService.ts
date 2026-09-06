@@ -3,6 +3,7 @@ import { query, getClient, inMemoryDb, isPostgresRunning } from '../db.js';
 import { Order, OrderStatus, OrderType, EntrySource, PaymentMethod, CartItem, CustomerDetails } from '../../src/types.js';
 import { findOrCreateCustomer } from './customerService.js';
 import { validateSignedToken } from './qrService.js';
+import { createPrintJobsForOrder } from './printService.js';
 
 const DEFAULT_RESTAURANT_ID = 'a0000000-0000-0000-0000-000000000001';
 const DEFAULT_BRANCH_ID = 'b0000000-0000-0000-0000-000000000001';
@@ -311,6 +312,18 @@ export async function createOrder(payload: CreateOrderPayload): Promise<Order> {
           }
         }
 
+        const rawShape = item.selectedShape as any;
+        const shapeCode =
+          rawShape === 'rectangle'
+            ? 'R'
+            : rawShape === 'circle'
+            ? 'C'
+            : rawShape === 'square'
+            ? 'S'
+            : ['R', 'C', 'S'].includes(rawShape as string)
+            ? (rawShape as 'R' | 'C' | 'S')
+            : null;
+
         const insertItemSql = `
           INSERT INTO order_items (
             order_id, restaurant_id, menu_item_id, item_name,
@@ -329,7 +342,7 @@ export async function createOrder(payload: CreateOrderPayload): Promise<Order> {
           item.menuItem?.name || 'Item',
           item.quantity,
           item.unitPrice,
-          item.selectedShape || null,
+          shapeCode,
           item.selectedCrust || null,
           item.spiceLevel || null,
           JSON.stringify(item.addons || []),
@@ -374,7 +387,13 @@ export async function createOrder(payload: CreateOrderPayload): Promise<Order> {
 
       await pgClient.query('COMMIT');
 
-      return assembleOrderObject(insertedOrder, itemRows, histRes.rows, customerRecord);
+      const assembled = await assembleOrderObject(insertedOrder, itemRows, histRes.rows, customerRecord);
+      if (assembled.status === 'confirmed' || assembled.paymentStatus === 'paid') {
+        await createPrintJobsForOrder(assembled, {
+          reason: assembled.paymentStatus === 'paid' ? 'online_paid' : 'confirmed',
+        }).catch((err) => console.error('[OrderService] Error triggering print jobs on order creation:', err));
+      }
+      return assembled;
     } catch (err) {
       await pgClient.query('ROLLBACK');
       console.error('[OrderService] Transaction failed, rolled back:', err);
@@ -484,7 +503,13 @@ export async function createOrder(payload: CreateOrderPayload): Promise<Order> {
     });
   }
 
-  return assembleOrderObject(newOrderRow, insertedItemRows, [histRow], customerRecord);
+  const assembled = await assembleOrderObject(newOrderRow, insertedItemRows, [histRow], customerRecord);
+  if (assembled.status === 'confirmed' || assembled.paymentStatus === 'paid') {
+    await createPrintJobsForOrder(assembled, {
+      reason: assembled.paymentStatus === 'paid' ? 'online_paid' : 'confirmed',
+    }).catch((err) => console.error('[OrderService] Error triggering print jobs on in-memory order creation:', err));
+  }
+  return assembled;
 }
 
 export async function getOrders(
@@ -662,7 +687,14 @@ export async function updateOrderStatus(
         );
       }
 
-      return getOrderById(order.id, restaurantId);
+      const updatedOrder = await getOrderById(order.id, restaurantId);
+      if (updatedOrder && newStatus === 'confirmed') {
+        await createPrintJobsForOrder(updatedOrder, { reason: 'confirmed' }).catch((err) =>
+          console.error('[OrderService] Error triggering print jobs on order confirm:', err)
+        );
+      }
+
+      return updatedOrder;
     } catch (err) {
       console.error('[OrderService] Error updating status in PG:', err);
     }
@@ -692,7 +724,14 @@ export async function updateOrderStatus(
     kot.status = newStatus === 'delivered' ? 'completed' : newStatus === 'cancelled' ? 'cancelled' : 'active';
   }
 
-  return getOrderById(orderId, restaurantId);
+  const inMemUpdated = await getOrderById(orderId, restaurantId);
+  if (inMemUpdated && newStatus === 'confirmed') {
+    await createPrintJobsForOrder(inMemUpdated, { reason: 'confirmed' }).catch((err) =>
+      console.error('[OrderService] Error triggering print jobs on order confirm in-memory:', err)
+    );
+  }
+
+  return inMemUpdated;
 }
 
 export async function deleteOrder(orderIdentifier: string, restaurantId: string = DEFAULT_RESTAURANT_ID): Promise<boolean> {
@@ -768,6 +807,14 @@ export async function markPaymentSuccess(
            WHERE order_id = $2 AND restaurant_id = $3`,
           [paymentId, realId, restaurantId]
         );
+
+        // Server-side payment verification succeeded: trigger KOT & Bill print jobs
+        const verifiedOrder = await getOrderById(realId, restaurantId);
+        if (verifiedOrder) {
+          await createPrintJobsForOrder(verifiedOrder, { reason: 'online_paid' }).catch((err) =>
+            console.error('[OrderService] Error triggering print jobs on verified online payment:', err)
+          );
+        }
       }
       return true;
     } catch (err) {
@@ -788,6 +835,13 @@ export async function markPaymentSuccess(
       pay.status = 'captured';
       pay.provider_payment_id = paymentId;
       pay.updated_at = new Date().toISOString();
+    }
+
+    const verifiedOrder = await getOrderById(order.id, restaurantId);
+    if (verifiedOrder) {
+      await createPrintJobsForOrder(verifiedOrder, { reason: 'online_paid' }).catch((err) =>
+        console.error('[OrderService] Error triggering print jobs on verified online payment in-memory:', err)
+      );
     }
   }
 

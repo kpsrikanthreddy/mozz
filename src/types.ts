@@ -93,7 +93,10 @@ export interface CustomerDetails {
 
 export interface Order {
   id: string;
+  restaurantId?: string;
+  branchId?: string;
   orderNumber?: string;
+  tableNumber?: string;
   createdAt: string;
   items: CartItem[];
   orderType: OrderType;

@@ -1,0 +1,11 @@
+User-agent: *
+Allow: /
+Disallow: /api/
+Disallow: /admin
+Disallow: /restaurant-admin
+Disallow: /platform-admin
+Disallow: /r/
+Disallow: /table/
+Disallow: /counter
+
+Sitemap: https://www.starters4u.in/sitemap.xml

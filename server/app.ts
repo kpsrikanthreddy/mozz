@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import express from 'express';
 import crypto from 'crypto';
 import cookieParser from 'cookie-parser';
@@ -10,7 +11,9 @@ import * as customerService from './services/customerService.js';
 import * as qrService from './services/qrService.js';
 import * as authService from './services/authService.js';
 import * as adminService from './services/adminService.js';
-import { requireAuth, requireRole } from './middleware/authMiddleware.js';
+import * as printService from './services/printService.js';
+import { requireAuth, requireRole, verifyAuthToken } from './middleware/authMiddleware.js';
+import { requireDeviceAuth } from './middleware/deviceAuthMiddleware.js';
 
 dotenv.config();
 
@@ -120,11 +123,18 @@ export function createApp(): express.Application {
         'kots',
         'qr_codes',
         'subscriptions',
+        'print_devices',
+        'printer_configurations',
+        'print_jobs',
+        'print_job_attempts',
       ],
+      printAgentReady: true,
       stats: {
         totalMenuItems: inMemoryDb.menu_items.length,
         totalOrders: inMemoryDb.orders.length,
         totalTables: inMemoryDb.restaurant_tables.length,
+        totalPrintDevices: inMemoryDb.print_devices.length,
+        totalPrintJobs: inMemoryDb.print_jobs.length,
       },
     });
   });
@@ -501,6 +511,391 @@ export function createApp(): express.Application {
       res.json(restaurants);
     } catch (err: any) {
       res.status(500).json({ error: 'Failed to fetch platform restaurants', details: err.message });
+    }
+  });
+
+  // ==========================================================
+  // STARTERS4U PRINT AGENT APIS (Desktop Agent Integration)
+  // ==========================================================
+
+  // 1. Staff authentication for desktop agent initial setup
+  app.post('/api/print-agent/auth/login', async (req, res) => {
+    try {
+      const { email, password, pin, restaurantSlug } = req.body;
+      const pass = password || pin;
+      const authResult = await authService.authenticateAdminUser(email, pass, restaurantSlug);
+      if (!authResult.success || !authResult.token || !authResult.user) {
+        return res.status(401).json({ error: authResult.message || 'Invalid credentials' });
+      }
+
+      // Fetch accessible branches for this user's restaurant
+      const branches = await adminService.getTenantBranches(authResult.user.restaurantId);
+      const restaurants =
+        authResult.user.role === 'SUPER_ADMIN'
+          ? await adminService.getAllPlatformRestaurants()
+          : [
+              {
+                id: authResult.user.restaurantId,
+                name: authResult.user.restaurantName || 'Current Restaurant',
+                slug: authResult.user.restaurantSlug || 'mozz',
+              },
+            ];
+
+      res.json({
+        success: true,
+        user: authResult.user,
+        token: authResult.token,
+        restaurants,
+        branches,
+      });
+    } catch (err: any) {
+      console.error('[PrintAgent API] Login error:', err);
+      res.status(500).json({ error: 'Failed to authenticate user', details: err.message });
+    }
+  });
+
+  // 2. Register Windows Desktop Device (Manual Admin Registration)
+  app.post('/api/print-agent/devices/register', requireAuth, async (req, res) => {
+    try {
+      const { deviceId, deviceName, restaurantId, branchId, platform = 'win32', appVersion = '1.0.0' } = req.body;
+
+      if (!deviceId || !deviceName) {
+        return res.status(400).json({ error: 'deviceId and deviceName are required' });
+      }
+
+      const targetRestaurantId = restaurantId || req.user!.restaurantId;
+      const targetBranchId = branchId || req.user!.branchId || 'b0000000-0000-0000-0000-000000000001';
+
+      const registration = await printService.registerDevice({
+        restaurantId: targetRestaurantId,
+        branchId: targetBranchId,
+        deviceId,
+        deviceName,
+        platform,
+        appVersion,
+      });
+
+      res.status(201).json({
+        success: true,
+        device: registration.device,
+        deviceToken: registration.deviceToken,
+      });
+    } catch (err: any) {
+      console.error('[PrintAgent API] Register device error:', err);
+      res.status(500).json({ error: 'Failed to register print device', details: err.message });
+    }
+  });
+
+  // 2.1. Generate 6-digit registration/pairing code for quick physical desktop POS onboarding
+  // Authenticated: requires store manager or owner
+  app.post('/api/admin/print-devices/pairing-code', requireAuth, async (req, res) => {
+    try {
+      const restaurantId = req.user!.restaurantId;
+      const branchId = req.body.branchId || req.user!.branchId || 'b0000000-0000-0000-0000-000000000001';
+
+      const pairing = await printService.createPairingCode({
+        restaurantId,
+        branchId,
+        userId: req.user!.userId,
+      });
+
+      res.status(201).json({
+        success: true,
+        pairingCode: pairing.pairingCode,
+        expiresAt: pairing.expiresAt,
+        expiresInSeconds: 600, // 10 minutes
+        restaurantId: pairing.restaurantId,
+        branchId: pairing.branchId,
+      });
+    } catch (err: any) {
+      console.error('[PrintAgent API] Generate pairing code error:', err);
+      res.status(500).json({ error: 'Failed to generate pairing code', details: err.message });
+    }
+  });
+
+  // 2.2. Exchange 6-digit code for device credentials (Called by Mozz Windows Print Agent)
+  // Rate limited: max 5 failed attempts per IP per 5 minutes to prevent brute-forcing
+  app.post('/api/print-agent/devices/pair', async (req, res) => {
+    try {
+      const clientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.socket.remoteAddress || '127.0.0.1';
+      const rateLimit = printService.checkPairingRateLimit(clientIp);
+      if (!rateLimit.allowed) {
+        return res.status(429).json({
+          error: 'Too many registration attempts. Please wait 5 minutes before trying again.',
+        });
+      }
+
+      const { pairingCode, deviceId, deviceName, platform, appVersion } = req.body;
+      if (!pairingCode || !deviceId) {
+        return res.status(400).json({ error: 'pairingCode and deviceId are required' });
+      }
+
+      const pairResult = await printService.pairDeviceWithCode({
+        pairingCode,
+        deviceId,
+        deviceName: deviceName || 'Windows POS Terminal',
+        platform: platform || 'win32',
+        appVersion: appVersion || '1.0.0',
+      });
+
+      if (!pairResult.success) {
+        return res.status(400).json({ error: pairResult.error });
+      }
+
+      res.status(201).json(pairResult);
+    } catch (err: any) {
+      console.error('[PrintAgent API] Pair device error:', err);
+      res.status(500).json({ error: 'Failed to pair device', details: err.message });
+    }
+  });
+
+  // 2.3. Deactivate device (Revokes hardware authorization and terminates active streams)
+  app.post('/api/admin/print-devices/:id/deactivate', requireAuth, async (req, res) => {
+    try {
+      const restaurantId = req.user!.restaurantId;
+      const result = await printService.deactivateDevice(req.params.id, restaurantId);
+      if (!result.success) {
+        return res.status(404).json({ error: result.message });
+      }
+      res.json(result);
+    } catch (err: any) {
+      console.error('[PrintAgent API] Deactivate device error:', err);
+      res.status(500).json({ error: 'Failed to deactivate device', details: err.message });
+    }
+  });
+
+  // 2.4. List all print devices for restaurant
+  app.get('/api/admin/print-devices', requireAuth, async (req, res) => {
+    try {
+      const restaurantId = req.user!.restaurantId;
+      const branchId = req.query.branchId as string | undefined;
+      const devices = await printService.getTenantDevices(restaurantId, branchId);
+      res.json(devices);
+    } catch (err: any) {
+      console.error('[PrintAgent API] List devices error:', err);
+      res.status(500).json({ error: 'Failed to list print devices', details: err.message });
+    }
+  });
+
+  // 3. Device Heartbeat
+  app.post('/api/print-agent/devices/heartbeat', requireDeviceAuth, async (req, res) => {
+    try {
+      await printService.touchDeviceHeartbeat(req.device!.id);
+      res.json({
+        success: true,
+        deviceId: req.device!.deviceId,
+        timestamp: new Date().toISOString(),
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: 'Failed to update heartbeat', details: err.message });
+    }
+  });
+
+  // Device-initiated logout/deactivation. Revokes the server token before local removal.
+  app.post('/api/print-agent/devices/deactivate', requireDeviceAuth, async (req, res) => {
+    try {
+      const result = await printService.deactivateDevice(
+        req.device!.id,
+        req.device!.restaurantId
+      );
+      if (!result.success) {
+        return res.status(404).json({ error: result.message });
+      }
+      res.json(result);
+    } catch (err: any) {
+      console.error('[PrintAgent API] Device self-deactivation error:', err);
+      res.status(500).json({ error: 'Failed to deactivate device', details: err.message });
+    }
+  });
+
+  // 3.5. Issue short-lived, single-use stream ticket for SSE connections
+  app.post('/api/print-agent/stream-ticket', requireDeviceAuth, async (req, res) => {
+    try {
+      const ticket = await printService.createStreamTicket(req.device!);
+      res.json({ ticket, expiresInSeconds: 60 });
+    } catch (err: any) {
+      res.status(500).json({ error: 'Failed to generate stream ticket', details: err.message });
+    }
+  });
+
+  // 4. Real-time Server-Sent Events (SSE) Stream
+  app.get('/api/print-agent/events', requireDeviceAuth, (req, res) => {
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no');
+    res.flushHeaders();
+
+    const unregister = printService.registerSseClient(
+      req.device!.restaurantId,
+      req.device!.branchId,
+      res
+    );
+
+    req.on('close', () => {
+      unregister();
+    });
+  });
+
+  // 5. Fallback polling for print jobs
+  app.get('/api/print-agent/jobs', requireDeviceAuth, async (req, res) => {
+    try {
+      const status = req.query.status as string | undefined;
+      const limit = parseInt((req.query.limit as string) || '25', 10);
+      const jobs = await printService.getPrintJobs(
+        req.device!.restaurantId,
+        req.device!.branchId,
+        status,
+        limit
+      );
+      res.json(jobs);
+    } catch (err: any) {
+      console.error('[PrintAgent API] Error fetching jobs:', err);
+      res.status(500).json({ error: 'Failed to fetch print jobs', details: err.message });
+    }
+  });
+
+  // 6. Atomically Claim a print job
+  app.post('/api/print-agent/jobs/:id/claim', requireDeviceAuth, async (req, res) => {
+    try {
+      const result = await printService.claimPrintJob(
+        req.params.id,
+        req.device!.id,
+        req.device!.restaurantId,
+        req.device!.branchId
+      );
+      if (!result.claimed) {
+        return res.status(409).json({ error: result.error || 'Job could not be claimed' });
+      }
+      res.json(result);
+    } catch (err: any) {
+      console.error('[PrintAgent API] Error claiming job:', err);
+      res.status(500).json({ error: 'Failed to claim print job', details: err.message });
+    }
+  });
+
+  // 6.1 Explicit staff retry for a previously failed job on the same device
+  app.post('/api/print-agent/jobs/:id/retry', requireDeviceAuth, async (req, res) => {
+    try {
+      const result = await printService.retryFailedPrintJob(
+        req.params.id,
+        req.device!.id,
+        req.device!.restaurantId,
+        req.device!.branchId
+      );
+      if (!result.claimed) {
+        return res.status(409).json({ error: result.error || 'Job cannot be retried' });
+      }
+      res.json(result);
+    } catch (err: any) {
+      console.error('[PrintAgent API] Error retrying print job:', err);
+      res.status(500).json({ error: 'Failed to retry print job', details: err.message });
+    }
+  });
+
+  // 7. Update Job Status (PRINTING, PRINTED, FAILED)
+  app.post('/api/print-agent/jobs/:id/status', requireDeviceAuth, async (req, res) => {
+    try {
+      const { status, errorMessage, durationMs, attemptNumber } = req.body;
+      if (!['PRINTING', 'PRINTED', 'FAILED'].includes(status)) {
+        return res.status(400).json({ error: 'Invalid status. Must be PRINTING, PRINTED, or FAILED' });
+      }
+
+      const updated = await printService.updatePrintJobStatus(req.params.id, req.device!.id, status, {
+        errorMessage,
+        durationMs,
+        attemptNumber,
+      });
+
+      if (!updated) {
+        return res.status(404).json({ error: 'Print job not found' });
+      }
+
+      res.json({ success: true, job: updated });
+    } catch (err: any) {
+      console.error('[PrintAgent API] Error updating job status:', err);
+      res.status(500).json({ error: 'Failed to update job status', details: err.message });
+    }
+  });
+
+  // 8. Manual Staff Reprint
+  app.post('/api/print-agent/jobs/reprint', async (req, res) => {
+    try {
+      let restaurantId = '';
+      let branchId = '';
+
+      const authHeader = req.headers.authorization;
+      if (authHeader && authHeader.startsWith('Bearer ')) {
+        const token = authHeader.substring(7).trim();
+        const device = await printService.authenticateDeviceToken(token);
+        if (device) {
+          restaurantId = device.restaurantId;
+          branchId = device.branchId;
+        } else {
+          const user = verifyAuthToken(token);
+          if (user) {
+            restaurantId = user.restaurantId;
+            branchId = user.branchId || 'b0000000-0000-0000-0000-000000000001';
+          }
+        }
+      }
+
+      if (!restaurantId) {
+        return res.status(401).json({ error: 'Authentication required to initiate reprint' });
+      }
+
+      const { orderId, jobType, station } = req.body;
+      if (!orderId || !jobType || !['KOT', 'BILL'].includes(jobType)) {
+        return res.status(400).json({ error: 'orderId and valid jobType (KOT or BILL) are required' });
+      }
+
+      const order = await orderService.getOrderById(orderId, restaurantId);
+      if (!order) {
+        return res.status(404).json({ error: 'Order not found' });
+      }
+      const orderBranchId = order.branchId || (order as any).branch_id;
+      if (orderBranchId && orderBranchId !== branchId) {
+        return res.status(403).json({ error: 'Order belongs to another branch' });
+      }
+
+      const reprintJob = await printService.createReprintJob(order, jobType, station);
+      res.status(201).json({ success: true, job: reprintJob });
+    } catch (err: any) {
+      console.error('[PrintAgent API] Error creating reprint:', err);
+      res.status(500).json({ error: 'Failed to create reprint job', details: err.message });
+    }
+  });
+
+  // 9. Get Printer Configurations
+  app.get('/api/print-agent/printers/config', requireDeviceAuth, async (req, res) => {
+    try {
+      const configs = await printService.getPrinterConfigurations(
+        req.device!.restaurantId,
+        req.device!.branchId,
+        req.device!.id
+      );
+      res.json(configs);
+    } catch (err: any) {
+      res.status(500).json({ error: 'Failed to fetch printer configurations', details: err.message });
+    }
+  });
+
+  // 10. Save Printer Configurations
+  app.post('/api/print-agent/printers/config', requireDeviceAuth, async (req, res) => {
+    try {
+      const { configs } = req.body;
+      if (!Array.isArray(configs)) {
+        return res.status(400).json({ error: 'configs must be an array of station mappings' });
+      }
+      const saved = await printService.savePrinterConfigurations(
+        req.device!.restaurantId,
+        req.device!.branchId,
+        req.device!.id,
+        configs
+      );
+      res.json({ success: true, configs: saved });
+    } catch (err: any) {
+      res.status(500).json({ error: 'Failed to save printer configurations', details: err.message });
     }
   });
 

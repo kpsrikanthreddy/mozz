@@ -1,7 +1,6 @@
 import crypto from 'crypto';
 import { query, inMemoryDb, isPostgresRunning } from '../db.js';
-
-const QR_SIGNING_SECRET = process.env.QR_SIGNING_SECRET || 'mozz_pizzateria_secure_qr_hmac_secret_2026';
+import { QR_SIGNING_SECRET } from '../config.js';
 const CANONICAL_BASE_URL = process.env.APP_URL || 'https://starters4u.in';
 const DEFAULT_RESTAURANT_ID = 'a0000000-0000-0000-0000-000000000001';
 const DEFAULT_BRANCH_ID = 'b0000000-0000-0000-0000-000000000001';

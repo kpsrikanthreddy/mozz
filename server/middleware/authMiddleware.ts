@@ -1,7 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
-
-const JWT_SECRET = process.env.JWT_SECRET || process.env.QR_SIGNING_SECRET || 'starters4u_super_secure_jwt_secret_2026';
+import { JWT_SECRET } from '../config.js';
 
 export interface AuthenticatedUser {
   userId: string;

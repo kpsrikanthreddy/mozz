@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import pg from 'pg';
 import fs from 'fs';
 import path from 'path';
@@ -74,6 +75,11 @@ export interface InMemoryDbState {
   kots: any[];
   qr_codes: any[];
   subscriptions: any[];
+  print_devices: any[];
+  printer_configurations: any[];
+  print_jobs: any[];
+  print_job_attempts: any[];
+  device_pairing_codes: any[];
 }
 
 export const inMemoryDb: InMemoryDbState = {
@@ -187,6 +193,22 @@ export const inMemoryDb: InMemoryDbState = {
       created_at: new Date().toISOString(),
     },
   ],
+  print_devices: [],
+  device_pairing_codes: [] as Array<{
+    id: string;
+    code: string;
+    restaurant_id: string;
+    branch_id: string;
+    created_by_user_id: string;
+    expires_at: string;
+    is_used: boolean;
+    used_at?: string | null;
+    used_by_device_id?: string | null;
+    created_at: string;
+  }>,
+  printer_configurations: [],
+  print_jobs: [],
+  print_job_attempts: [],
 };
 
 // Seed sample orders for immediate richness if in memory

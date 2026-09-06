@@ -477,3 +477,95 @@ CREATE INDEX IF NOT EXISTS idx_payments_order_id ON payments(order_id);
 CREATE INDEX IF NOT EXISTS idx_kots_order_id ON kots(order_id);
 CREATE INDEX IF NOT EXISTS idx_kots_restaurant_id ON kots(restaurant_id);
 CREATE INDEX IF NOT EXISTS idx_qr_codes_token ON qr_codes(token);
+
+-- ==========================================================
+-- 15. STARTERS4U PRINT AGENT & THERMAL PRINTING
+-- ==========================================================
+CREATE TABLE IF NOT EXISTS print_devices (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    restaurant_id UUID NOT NULL REFERENCES restaurants(id) ON DELETE CASCADE,
+    branch_id UUID NOT NULL REFERENCES restaurant_branches(id) ON DELETE CASCADE,
+    device_id VARCHAR(100) NOT NULL,
+    device_name VARCHAR(255) NOT NULL,
+    token_hash VARCHAR(255) NOT NULL,
+    platform VARCHAR(50) DEFAULT 'win32',
+    app_version VARCHAR(50) DEFAULT '1.0.0',
+    is_active BOOLEAN DEFAULT TRUE,
+    last_heartbeat_at TIMESTAMPTZ DEFAULT NOW(),
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    CONSTRAINT unique_restaurant_branch_device UNIQUE (restaurant_id, branch_id, device_id)
+);
+
+CREATE TABLE IF NOT EXISTS device_pairing_codes (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    code VARCHAR(6) NOT NULL,
+    restaurant_id UUID NOT NULL REFERENCES restaurants(id) ON DELETE CASCADE,
+    branch_id UUID NOT NULL REFERENCES restaurant_branches(id) ON DELETE CASCADE,
+    created_by_user_id UUID REFERENCES restaurant_users(id) ON DELETE SET NULL,
+    expires_at TIMESTAMPTZ NOT NULL,
+    is_used BOOLEAN DEFAULT FALSE,
+    used_at TIMESTAMPTZ,
+    used_by_device_id UUID REFERENCES print_devices(id) ON DELETE SET NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS printer_configurations (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    restaurant_id UUID NOT NULL REFERENCES restaurants(id) ON DELETE CASCADE,
+    branch_id UUID NOT NULL REFERENCES restaurant_branches(id) ON DELETE CASCADE,
+    device_id UUID REFERENCES print_devices(id) ON DELETE CASCADE,
+    station VARCHAR(50) NOT NULL,
+    printer_name VARCHAR(255) NOT NULL,
+    paper_width_mm INT NOT NULL DEFAULT 80,
+    copies INT NOT NULL DEFAULT 1,
+    is_auto_print BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    CONSTRAINT unique_device_station_printer UNIQUE (device_id, station)
+);
+
+CREATE TABLE IF NOT EXISTS print_jobs (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    restaurant_id UUID NOT NULL REFERENCES restaurants(id) ON DELETE CASCADE,
+    branch_id UUID NOT NULL REFERENCES restaurant_branches(id) ON DELETE CASCADE,
+    order_id UUID NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
+    job_type VARCHAR(20) NOT NULL CHECK (job_type IN ('KOT', 'BILL')),
+    station VARCHAR(50) NOT NULL DEFAULT 'kitchen_master',
+    idempotency_key VARCHAR(255) NOT NULL UNIQUE,
+    status VARCHAR(30) NOT NULL DEFAULT 'PENDING'
+        CHECK (status IN ('PENDING', 'CLAIMED', 'PRINTING', 'PRINTED', 'FAILED', 'CANCELLED')),
+    is_reprint BOOLEAN NOT NULL DEFAULT FALSE,
+    claimed_by_device_id UUID REFERENCES print_devices(id) ON DELETE SET NULL,
+    claimed_at TIMESTAMPTZ,
+    printed_at TIMESTAMPTZ,
+    failed_at TIMESTAMPTZ,
+    error_message TEXT,
+    retry_count INT NOT NULL DEFAULT 0,
+    max_retries INT NOT NULL DEFAULT 3,
+    payload JSONB NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS print_job_attempts (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    job_id UUID NOT NULL REFERENCES print_jobs(id) ON DELETE CASCADE,
+    device_id UUID REFERENCES print_devices(id) ON DELETE SET NULL,
+    attempt_number INT NOT NULL DEFAULT 1,
+    status VARCHAR(30) NOT NULL,
+    error_message TEXT,
+    duration_ms INT,
+    attempted_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_print_devices_lookup ON print_devices(restaurant_id, branch_id, is_active);
+CREATE INDEX IF NOT EXISTS idx_print_devices_token ON print_devices(token_hash);
+CREATE INDEX IF NOT EXISTS idx_printer_configs_device ON printer_configurations(device_id);
+CREATE INDEX IF NOT EXISTS idx_print_jobs_tenant_branch_status ON print_jobs(restaurant_id, branch_id, status);
+CREATE INDEX IF NOT EXISTS idx_print_jobs_order_id ON print_jobs(order_id);
+CREATE INDEX IF NOT EXISTS idx_print_jobs_idempotency ON print_jobs(idempotency_key);
+CREATE INDEX IF NOT EXISTS idx_print_jobs_created_at ON print_jobs(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_print_job_attempts_job_id ON print_job_attempts(job_id);
+CREATE INDEX IF NOT EXISTS idx_pairing_codes_lookup ON device_pairing_codes(code, is_used, expires_at);
+
