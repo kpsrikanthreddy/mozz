@@ -66,15 +66,15 @@ export const ShapeGuideModal: React.FC<ShapeGuideModalProps> = ({
               Long handheld pocket crust loaded edge-to-edge. Ideal for individual cravings and crisp handheld bites.
             </p>
             <div className="mt-auto w-full pt-3 border-t border-slate-200 flex items-center justify-between text-xs">
-              <span className="text-slate-400">Serves:</span>
-              <span className="font-semibold text-slate-700">1-2 People</span>
+              <span className="text-slate-400">Size:</span>
+              <span className="font-semibold text-slate-700">Regular Pocket</span>
             </div>
           </div>
 
           {/* Circular [C] */}
           <div className="bg-white border-2 border-rose-500 rounded-2xl p-5 flex flex-col items-center text-center transition group relative shadow-md">
             <div className="absolute -top-3 bg-rose-600 text-white text-[10px] font-black uppercase px-2.5 py-0.5 rounded-full tracking-wider shadow-xs">
-              Most Popular
+              Classic Choice
             </div>
 
             {/* Visual Icon */}
@@ -97,8 +97,8 @@ export const ShapeGuideModal: React.FC<ShapeGuideModalProps> = ({
               The timeless round deep-dish pocket. Perfect balance between bubbling cheese core and golden crust.
             </p>
             <div className="mt-auto w-full pt-3 border-t border-slate-200 flex items-center justify-between text-xs">
-              <span className="text-slate-400">Serves:</span>
-              <span className="font-semibold text-slate-700">2-3 People</span>
+              <span className="text-slate-400">Size:</span>
+              <span className="font-semibold text-slate-700">Classic Pocket</span>
             </div>
           </div>
 
@@ -124,8 +124,8 @@ export const ShapeGuideModal: React.FC<ShapeGuideModalProps> = ({
               Signature jumbo square pocket. Loaded with double in-house cheese blend & extra toppings to the corners.
             </p>
             <div className="mt-auto w-full pt-3 border-t border-slate-200 flex items-center justify-between text-xs">
-              <span className="text-slate-400">Serves:</span>
-              <span className="font-semibold text-slate-700">3-4 People</span>
+              <span className="text-slate-400">Size:</span>
+              <span className="font-semibold text-slate-700">Shareable Pocket</span>
             </div>
           </div>
         </div>
@@ -146,7 +146,7 @@ export const ShapeGuideModal: React.FC<ShapeGuideModalProps> = ({
             </div>
             <div className="flex flex-col items-center p-2">
               <span className="text-lg mb-1">🥟</span>
-              <span className="text-[11px] font-semibold text-slate-800">Authentic Korean Pocket</span>
+              <span className="text-[11px] font-semibold text-slate-800">Korean Pocket Style</span>
             </div>
             <div className="flex flex-col items-center p-2">
               <span className="text-lg mb-1">🔥</span>

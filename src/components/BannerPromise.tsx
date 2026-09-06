@@ -45,7 +45,7 @@ export const BannerPromise: React.FC<BannerPromiseProps> = ({
             </h1>
 
             <p className="text-slate-300 text-sm sm:text-base leading-relaxed mb-6 max-w-xl">
-              Experience authentic Korean-Style Pocket Pizzas baked inside crispy hand-folded dough with molten cheese and savory fillings.
+              Discover Korean-Style Pocket Pizzas baked inside hand-folded dough with cheese and savory fillings.
             </p>
 
             {/* CTAs */}

@@ -107,8 +107,8 @@ export const AboutPage: React.FC<AboutPageProps> = ({ routeConfig }) => {
             <div className="flex items-start gap-3">
               <ShieldCheck className="w-5 h-5 text-emerald-600 mt-0.5 shrink-0" />
               <div>
-                <strong className="text-stone-900 block font-semibold">Strict Dietary Segregation</strong>
-                Vegetarian and non-vegetarian dishes are prepared on separate woks and prep tables to prevent cross-contact.
+                <strong className="text-stone-900 block font-semibold">Clear Menu Demarcation</strong>
+                Distinct vegetarian and non-vegetarian sections are clearly labeled throughout the menu.
               </div>
             </div>
             <div className="flex items-start gap-3">
@@ -122,7 +122,7 @@ export const AboutPage: React.FC<AboutPageProps> = ({ routeConfig }) => {
               <MapPin className="w-5 h-5 text-rose-600 mt-0.5 shrink-0" />
               <div>
                 <strong className="text-stone-900 block font-semibold">Local Gachibowli Presence</strong>
-                Based in {getFormattedLocation()}, catering to local residents, tech parks, and nearby neighborhoods.
+                Based in {getFormattedLocation()}, serving our local Gachibowli community.
               </div>
             </div>
           </div>

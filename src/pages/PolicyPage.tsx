@@ -84,10 +84,10 @@ export const PolicyPage: React.FC<PolicyPageProps> = ({ routeConfig }) => {
       badge: 'Cancellation & Refund Framework',
       sections: [
         {
-          title: '1. Order Cancellation Window',
+          title: '1. Order Cancellation Policy',
           content: [
-            'Because food is prepared fresh to order, cancellations can only be accepted before kitchen preparation or pizza baking has commenced (typically within 2 minutes of placement).',
-            'Once food preparation or oven baking is underway, orders cannot be cancelled due to the perishable nature of freshly cooked dishes.',
+            'Because food is prepared fresh to order, cancellations can only be requested prior to kitchen preparation commencing.',
+            'Once kitchen preparation or oven baking is underway, orders cannot be cancelled due to the perishable nature of freshly prepared food.',
           ],
         },
         {
@@ -98,9 +98,9 @@ export const PolicyPage: React.FC<PolicyPageProps> = ({ routeConfig }) => {
           ],
         },
         {
-          title: '3. Refund Processing Timelines',
+          title: '3. Refund Processing',
           content: [
-            'Approved refunds for online payments processed via Razorpay/UPI are typically credited back to the original funding account within 5 to 7 business days, in accordance with banking standards.',
+            'Approved refunds for online payments are credited back to the original payment source in accordance with standard payment gateway and banking processing procedures.',
           ],
         },
         {
@@ -130,10 +130,10 @@ export const PolicyPage: React.FC<PolicyPageProps> = ({ routeConfig }) => {
             Applicable to customers of Starters4U and MOZZ Chinese & Pizzateria in {BUSINESS_INFO.locality}, {BUSINESS_INFO.city}.
           </p>
 
-          <div className="mt-4 flex items-start gap-2.5 p-3.5 bg-stone-100 rounded-xl text-stone-600 text-xs leading-relaxed border border-stone-200">
-            <AlertCircle className="w-4 h-4 text-stone-500 shrink-0 mt-0.5" />
+          <div className="mt-4 flex items-start gap-2.5 p-3.5 bg-amber-50 rounded-xl text-amber-900 text-xs leading-relaxed border border-amber-200">
+            <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
             <p>
-              <strong>Notice:</strong> This document outlines customer operational policies for Starters4U and MOZZ Chinese & Pizzateria and does not constitute formal legal counsel. All transactions are governed by the laws of Telangana, India.
+              <strong>Operational Policy Notice:</strong> This document outlines current operational procedures for online ordering, fulfillment, and payment handling via Starters4U for MOZZ Chinese & Pizzateria. It represents an active operational draft and does not constitute formal legal counsel. For policy clarifications, please contact store management.
             </p>
           </div>
         </div>

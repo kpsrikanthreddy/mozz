@@ -19,22 +19,22 @@ export const SEO_ROUTES: SeoRouteConfig[] = [
       {
         question: 'What is the relationship between Starters4U and MOZZ Chinese & Pizzateria?',
         answer:
-          'Starters4U is the official online ordering platform for MOZZ Chinese & Pizzateria. All orders placed on this website are prepared fresh by MOZZ in Gachibowli, Hyderabad.',
+          'Starters4U is the official online ordering platform for MOZZ Chinese & Pizzateria. All orders placed on this website are prepared by MOZZ in Gachibowli, Hyderabad.',
       },
       {
         question: 'What cuisines are available on Starters4U?',
         answer:
-          'MOZZ Chinese & Pizzateria serves Korean-style pocket pizzas in three custom shapes (Rectangular, Circular, Square), Indo-Chinese starters, wok fried rice, Hakka and Schezwan noodles, Maggies, and Himalayan momos.',
+          'MOZZ Chinese & Pizzateria serves Korean-style pocket pizzas in three shapes (Rectangular, Circular, Square), Indo-Chinese starters, fried rice, noodles, Maggies, and momos.',
       },
       {
         question: 'How can I pay for my food order?',
         answer:
-          'Online orders support secure UPI, credit cards, debit cards, and net banking via Razorpay, as well as pay-on-delivery or counter pickup where applicable.',
+          'Online orders support secure UPI, credit cards, debit cards, and net banking via Razorpay.',
       },
       {
-        question: 'Are vegetarian and non-vegetarian dishes prepared separately?',
+        question: 'Does the menu offer vegetarian and non-vegetarian options?',
         answer:
-          'Yes, MOZZ Chinese & Pizzateria maintains strict kitchen segregation with dedicated cookware and prep stations for veg and non-veg items.',
+          'MOZZ Chinese & Pizzateria offers distinct vegetarian and non-vegetarian menu sections for customer selection.',
       },
     ],
   },
@@ -94,7 +94,7 @@ export const SEO_ROUTES: SeoRouteConfig[] = [
       {
         question: 'Can I order Chinese food online for delivery in Gachibowli?',
         answer:
-          'Yes, Starters4U provides online ordering with doorstep delivery across Gachibowli as well as self-takeaway pickup.',
+          'Yes, Starters4U provides online ordering for delivery in Gachibowli as well as self-takeaway pickup.',
       },
     ],
   },
@@ -111,13 +111,13 @@ export const SEO_ROUTES: SeoRouteConfig[] = [
       { name: 'Home', path: '/' },
       { name: 'Chinese Starters Gachibowli', path: '/chinese-starters-gachibowli' },
     ],
-    targetKeywords: ['Best Chinese starters in Gachibowli', 'Chinese starters Gachibowli'],
+    targetKeywords: ['Chinese starters in Gachibowli', 'Chinese starters Gachibowli'],
     isPublicIndexable: true,
     changefreq: 'weekly',
     priority: 0.8,
     faqs: [
       {
-        question: 'What are the popular Chinese starters available at MOZZ?',
+        question: 'What Chinese starters are available at MOZZ?',
         answer:
           'Menu highlights include Veg Manchurian (₹99), Chilli Paneer (₹129), Paneer 65 (₹129), Garlic Chicken (₹179), Chicken 65 (₹179), and Chicken Majestic (₹179).',
       },
@@ -135,7 +135,7 @@ export const SEO_ROUTES: SeoRouteConfig[] = [
     canonicalUrl: `${BUSINESS_INFO.domain}/veg-starters-gachibowli`,
     title: 'Veg Starters in Gachibowli | Order Online – Starters4U',
     metaDescription:
-      'Order fresh vegetarian Chinese starters in Gachibowli from MOZZ. Veg Manchurian, Chilli Paneer, Kaju Paneer, Paneer 65 and Chilli Mushroom prepared fresh.',
+      'Order vegetarian Chinese starters in Gachibowli from MOZZ. Veg Manchurian, Chilli Paneer, Kaju Paneer, Paneer 65 and Chilli Mushroom.',
     h1: 'Veg Starters in Gachibowli – Paneer, Mushroom & Manchurian',
     breadcrumbs: [
       { name: 'Home', path: '/' },
@@ -152,9 +152,9 @@ export const SEO_ROUTES: SeoRouteConfig[] = [
           'Vegetarian starters include Veg Manchurian (₹99), Chilli Mushroom (₹99), Paneer 65 (₹129), Kaju Paneer (₹129), and Chilli Paneer (₹129).',
       },
       {
-        question: 'Are vegetarian starters prepared in separate utensils?',
+        question: 'What vegetarian options are featured?',
         answer:
-          'Yes, MOZZ maintains strict food safety and segregation with dedicated woks, boards, and spatulas for all vegetarian preparations.',
+          'Vegetarian starters feature paneer, mushroom, and mixed vegetable preparations tossed in wok gravies and dry sauces.',
       },
     ],
   },
@@ -214,7 +214,7 @@ export const SEO_ROUTES: SeoRouteConfig[] = [
       {
         question: 'What sizes or shapes do MOZZ pocket pizzas come in?',
         answer:
-          'They are available in three distinct shapes: [R] Rectangular (Serves 1-2), [C] Circular (Serves 2-3), and [S] Square (Serves 3-4).',
+          'They are available in three shapes: [R] Rectangular, [C] Circular, and [S] Square.',
       },
     ],
   },
@@ -269,7 +269,7 @@ export const SEO_ROUTES: SeoRouteConfig[] = [
       {
         question: 'What types of momos are on the MOZZ menu?',
         answer:
-          'MOZZ serves 6-piece portions of Veg Steam Momos (₹77), Paneer Steam Momos (₹87), Paneer Fried Momos (₹87), Chicken Steamed Momos (₹97), Chicken Fried Momos (₹97), and Peri Peri Fried Momos (₹97).',
+          'MOZZ offers Veg Steam Momos (₹77), Paneer Steam Momos (₹87), Paneer Fried Momos (₹87), Chicken Steamed Momos (₹97), Chicken Fried Momos (₹97), and Peri Peri Fried Momos (₹97).',
       },
       {
         question: 'What sauces are served with the momos?',
@@ -359,7 +359,7 @@ export const SEO_ROUTES: SeoRouteConfig[] = [
       {
         question: 'How are pocket pizzas packaged for delivery?',
         answer:
-          'Pocket pizzas are packed in specialized ventilated, insulated boxes that allow steam to escape while retaining heat, ensuring the pocket crust stays crisp and the cheese remains molten.',
+          'Pocket pizzas are packed in food-grade pizza cartons designed for secure food transit.',
       },
       {
         question: 'Can I choose takeaway instead of delivery?',
@@ -460,12 +460,20 @@ export function getRouteJsonLd(route: SeoRouteConfig): Record<string, any>[] {
   // 1. WebSite (on homepage)
   if (route.path === '/') {
     schemas.push(getWebSiteSchema());
+    // Full Restaurant entity on homepage
+    schemas.push(getRestaurantSchema());
+  } else {
+    // Restaurant connected reference on subpages
+    schemas.push({
+      '@context': 'https://schema.org',
+      '@type': 'Restaurant',
+      '@id': `${BUSINESS_INFO.domain}/#restaurant`,
+      name: BUSINESS_INFO.restaurantName,
+      url: `${BUSINESS_INFO.domain}/`,
+    });
   }
 
-  // 2. Restaurant Reference (on all pages)
-  schemas.push(getRestaurantSchema());
-
-  // 3. WebPage schema
+  // 2. WebPage schema
   schemas.push({
     '@context': 'https://schema.org',
     '@type': 'WebPage',
@@ -476,13 +484,17 @@ export function getRouteJsonLd(route: SeoRouteConfig): Record<string, any>[] {
     isPartOf: {
       '@id': `${BUSINESS_INFO.domain}/#website`,
     },
+    about: {
+      '@id': `${BUSINESS_INFO.domain}/#restaurant`,
+    },
   });
 
-  // 4. BreadcrumbList schema
+  // 3. BreadcrumbList schema
   if (route.breadcrumbs && route.breadcrumbs.length > 0) {
     schemas.push({
       '@context': 'https://schema.org',
       '@type': 'BreadcrumbList',
+      '@id': `${route.canonicalUrl}#breadcrumb`,
       itemListElement: route.breadcrumbs.map((b, idx) => ({
         '@type': 'ListItem',
         position: idx + 1,
@@ -492,11 +504,12 @@ export function getRouteJsonLd(route: SeoRouteConfig): Record<string, any>[] {
     });
   }
 
-  // 5. FAQPage schema (only when genuine visible FAQs exist)
+  // 4. FAQPage schema (only when genuine visible FAQs exist)
   if (route.faqs && route.faqs.length > 0) {
     schemas.push({
       '@context': 'https://schema.org',
       '@type': 'FAQPage',
+      '@id': `${route.canonicalUrl}#faq`,
       mainEntity: route.faqs.map((f) => ({
         '@type': 'Question',
         name: f.question,

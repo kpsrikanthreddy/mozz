@@ -50,12 +50,12 @@ export const CategoryPage: React.FC<CategoryPageProps> = ({ routeConfig }) => {
             desc: 'Every portion of fried rice, Hakka noodles, and Manchurian is tossed on open-flame woks when your order arrives.',
           },
           {
-            title: 'Separate Veg & Non-Veg Stations',
-            desc: 'Dedicated cooking woks, chopping boards, and prep counters prevent any cross-contact between paneer and chicken.',
+            title: 'Clear Dietary Indicators',
+            desc: 'Every item on our menu clearly displays dietary markers (Veg, Non-Veg, Egg) so customers can select dishes according to their dietary preferences.',
           },
           {
             title: 'Online Delivery & Counter Takeaway',
-            desc: 'Order through Starters4U for quick doorstep delivery or convenient self-pickup at our Gachibowli store.',
+            desc: 'Order through Starters4U for delivery or convenient self-pickup at our Gachibowli store.',
           },
         ],
         relatedLinks: [
@@ -103,7 +103,7 @@ export const CategoryPage: React.FC<CategoryPageProps> = ({ routeConfig }) => {
       editorialContent = {
         badge: '100% Vegetarian Starters',
         leadText:
-          'Our vegetarian Chinese starters are crafted with fresh dairy paneer, whole button mushrooms, and finely minced garden vegetables. Prepared with strict vegetarian cooking protocols in Gachibowli.',
+          'Our vegetarian Chinese starters are prepared with dairy paneer, whole button mushrooms, and garden vegetables, seasoned with aromatic Indo-Chinese sauces in Gachibowli.',
         highlights: [
           {
             title: 'Veg Manchurian (₹99)',
@@ -199,15 +199,15 @@ export const CategoryPage: React.FC<CategoryPageProps> = ({ routeConfig }) => {
         highlights: [
           {
             title: '[R] Rectangular Shape (Regular)',
-            desc: 'Ideal for 1 person (solo dining or work lunches). Easy to hold with one hand.',
+            desc: 'Regular pocket crust size, convenient for individual dining and handheld bites.',
           },
           {
             title: '[C] Circular Shape (Classic)',
-            desc: 'Designed for 2 to 3 people. Offers a balanced crust-to-filling ratio for sharing.',
+            desc: 'Classic round pocket crust, offering a balanced crust-to-filling ratio.',
           },
           {
             title: '[S] Square Shape (Signature)',
-            desc: 'Feeds 3 to 4 people. Cut into convenient pocket portions packed with filling.',
+            desc: 'Signature large square pocket crust, packed with extra cheese and fillings.',
           },
         ],
         relatedLinks: [
@@ -225,7 +225,7 @@ export const CategoryPage: React.FC<CategoryPageProps> = ({ routeConfig }) => {
       editorialContent = {
         badge: 'Himalayan Dumplings',
         leadText:
-          'Enjoy handcrafted steamed, golden fried, and fiery peri-peri momos in Gachibowli from MOZZ Chinese & Pizzateria. Each portion includes 6 dumplings served with authentic dipping accompaniments.',
+          'Enjoy freshly prepared steamed, golden fried, and seasoned peri-peri momos in Gachibowli from MOZZ Chinese & Pizzateria. Each portion is served with dipping sauces.',
         highlights: [
           {
             title: 'Steamed Momos',

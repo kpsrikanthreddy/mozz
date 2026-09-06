@@ -22,7 +22,7 @@ interface HomePageProps {
 }
 
 export const HomePage: React.FC<HomePageProps> = ({ routeConfig, onOpenShapeGuide }) => {
-  // Select authentic featured items from the static menu dataset
+  // Select featured items from the static menu dataset
   const featuredPocketPizzas = INITIAL_MENU.filter(
     (item) => item.category === 'pocket_pizza_veg' || item.category === 'pocket_pizza_nonveg'
   ).slice(0, 4);
@@ -70,7 +70,7 @@ export const HomePage: React.FC<HomePageProps> = ({ routeConfig, onOpenShapeGuid
           </h1>
 
           <p className="text-slate-300 text-sm sm:text-base leading-relaxed mb-7 max-w-2xl">
-            Experience authentic Korean-Style Pocket Pizzas baked inside crispy hand-folded dough with molten cheese and savory fillings, alongside authentic wok-tossed Chinese starters, fried rice & Himalayan momos.
+            Enjoy Korean-Style Pocket Pizzas baked inside hand-folded dough with cheese and savory fillings, alongside wok-tossed Chinese starters, fried rice & Himalayan momos.
           </p>
 
           {/* Vibrant Action Buttons */}

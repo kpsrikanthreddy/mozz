@@ -40,6 +40,9 @@ import {
   Globe,
   Download,
   FileImage,
+  MessageSquare,
+  PhoneCall,
+  RefreshCw,
 } from 'lucide-react';
 import { SHAPE_DETAILS } from '../data/menuData';
 import { PrintModal } from './PrintModal';
@@ -189,10 +192,85 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ onBackToMenu }) => {
 
   const [pinInput, setPinInput] = useState('');
   const [loginError, setLoginError] = useState('');
-  const [adminTab, setAdminTab] = useState<'orders' | 'calendar' | 'menu_stock' | 'printers' | 'qr_codes' | 'analytics'>('orders');
+  const [adminTab, setAdminTab] = useState<'orders' | 'calendar' | 'menu_stock' | 'printers' | 'qr_codes' | 'analytics' | 'inquiries'>('orders');
   const [orderStatusFilter, setOrderStatusFilter] = useState<string>('all');
   const [menuSearch, setMenuSearch] = useState('');
   const [copiedUrl, setCopiedUrl] = useState<string | null>(null);
+
+  // Customer Inquiries States
+  interface CustomerInquiry {
+    id: string;
+    restaurant_id: string;
+    branch_id?: string;
+    name: string;
+    phone?: string;
+    order_id?: string;
+    message: string;
+    status: 'new' | 'in_review' | 'resolved' | 'spam';
+    ip_hash: string;
+    created_at: string;
+    updated_at: string;
+  }
+
+  const [inquiries, setInquiries] = useState<CustomerInquiry[]>([]);
+  const [isLoadingInquiries, setIsLoadingInquiries] = useState<boolean>(false);
+  const [inquiryStatusFilter, setInquiryStatusFilter] = useState<string>('all');
+  const [inquirySearch, setInquirySearch] = useState<string>('');
+
+  const fetchInquiries = useCallback(async () => {
+    const token = localStorage.getItem('starters4u_admin_jwt_token');
+    try {
+      setIsLoadingInquiries(true);
+      const res = await fetch('/api/admin/inquiries', {
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data)) {
+          setInquiries(data);
+        }
+      }
+    } catch (err) {
+      console.warn('[AdminPortal] Error loading customer inquiries:', err);
+    } finally {
+      setIsLoadingInquiries(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (isAdminAuthenticated) {
+      fetchInquiries();
+    }
+  }, [isAdminAuthenticated, fetchInquiries]);
+
+  const handleUpdateInquiryStatus = async (
+    inquiryId: string,
+    newStatus: 'new' | 'in_review' | 'resolved' | 'spam'
+  ) => {
+    const token = localStorage.getItem('starters4u_admin_jwt_token');
+    try {
+      const res = await fetch(`/api/admin/inquiries/${encodeURIComponent(inquiryId)}/status`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ status: newStatus }),
+      });
+      if (res.ok) {
+        const updated = await res.json();
+        setInquiries((prev) => prev.map((inq) => (inq.id === inquiryId ? updated : inq)));
+        soundService.playChime('pop');
+      } else {
+        alert('Failed to update inquiry status. Please check your admin connection.');
+      }
+    } catch (err: any) {
+      alert(`Error updating inquiry: ${err.message}`);
+    }
+  };
 
   // Table QR Management States
   const [tableCount, setTableCount] = useState<number>(8);
@@ -229,7 +307,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ onBackToMenu }) => {
     priceR: 99,
     priceC: 139,
     priceS: 179,
-    image: 'https://images.unsplash.com/photo-1513104890138-7c749659a591?w=600&auto=format&fit=crop&q=80',
+    image: '',
     badge: '',
     inStock: true,
   });
@@ -246,7 +324,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ onBackToMenu }) => {
       priceR: 99,
       priceC: 139,
       priceS: 179,
-      image: 'https://images.unsplash.com/photo-1513104890138-7c749659a591?w=600&auto=format&fit=crop&q=80',
+      image: '',
       badge: '',
       inStock: true,
     });
@@ -265,7 +343,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ onBackToMenu }) => {
       priceR: item.prices?.R || 99,
       priceC: item.prices?.C || 139,
       priceS: item.prices?.S || 179,
-      image: item.image || 'https://images.unsplash.com/photo-1513104890138-7c749659a591?w=600&auto=format&fit=crop&q=80',
+      image: item.image || '',
       badge: item.badge || '',
       inStock: item.inStock,
     });
@@ -513,6 +591,22 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ onBackToMenu }) => {
               }`}
             >
               Sales Analytics
+            </button>
+            <button
+              onClick={() => setAdminTab('inquiries')}
+              className={`px-3.5 py-2 rounded-xl transition flex items-center gap-1.5 ${
+                adminTab === 'inquiries'
+                  ? 'bg-rose-600 text-white shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <MessageSquare className="w-3.5 h-3.5" />
+              <span>Inquiries</span>
+              {inquiries.filter((i) => i.status === 'new').length > 0 && (
+                <span className="ml-1 px-1.5 py-0.5 text-[10px] font-black rounded-full bg-amber-400 text-slate-950">
+                  {inquiries.filter((i) => i.status === 'new').length}
+                </span>
+              )}
             </button>
           </div>
 
@@ -920,11 +1014,17 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ onBackToMenu }) => {
                     <tr key={item.id} className="hover:bg-slate-50/70 transition">
                       <td className="py-3 px-3 font-bold text-slate-900">
                         <div className="flex items-center gap-2.5">
-                          <img
-                            src={item.image || 'https://images.unsplash.com/photo-1513104890138-7c749659a591?w=100'}
-                            alt={item.name}
-                            className="w-8 h-8 rounded-lg object-cover border border-slate-200 shrink-0"
-                          />
+                          {item.image ? (
+                            <img
+                              src={item.image}
+                              alt={item.name}
+                              className="w-8 h-8 rounded-lg object-cover border border-slate-200 shrink-0"
+                            />
+                          ) : (
+                            <div className="w-8 h-8 rounded-lg bg-slate-100 border border-slate-200 flex items-center justify-center font-bold text-xs text-slate-600 shrink-0 uppercase">
+                              {item.name.slice(0, 2)}
+                            </div>
+                          )}
                           <div>
                             <div className="flex items-center gap-1.5">
                               <span>{item.name}</span>
@@ -1946,6 +2046,238 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ onBackToMenu }) => {
               );
             })()}
           </div>
+        </div>
+      )}
+
+      {/* ================= TAB 7: CUSTOMER INQUIRIES & SUPPORT ================= */}
+      {adminTab === 'inquiries' && (
+        <div className="space-y-6">
+          {/* Header & Metrics */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div>
+              <h2 className="text-xl font-black text-slate-900 flex items-center gap-2">
+                <MessageSquare className="w-5 h-5 text-rose-600" />
+                <span>Customer Inquiries & Support Tickets</span>
+              </h2>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Multi-tenant tickets submitted through the contact form. Plain-text verified with audit IP hash.
+              </p>
+            </div>
+
+            <button
+              onClick={fetchInquiries}
+              disabled={isLoadingInquiries}
+              className="px-3.5 py-2 rounded-xl text-xs font-bold bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 flex items-center gap-1.5 self-start sm:self-auto shadow-xs transition"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${isLoadingInquiries ? 'animate-spin text-rose-600' : 'text-slate-500'}`} />
+              <span>Refresh Inquiries</span>
+            </button>
+          </div>
+
+          {/* Quick Metrics */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-xs">
+              <div className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Total Received</div>
+              <div className="text-2xl font-black text-slate-900 mt-1">{inquiries.length}</div>
+            </div>
+            <div className="bg-amber-50/60 border border-amber-200 rounded-2xl p-4 shadow-xs">
+              <div className="text-[11px] font-bold text-amber-700 uppercase tracking-wider">New (Pending)</div>
+              <div className="text-2xl font-black text-amber-900 mt-1">
+                {inquiries.filter((i) => i.status === 'new').length}
+              </div>
+            </div>
+            <div className="bg-blue-50/60 border border-blue-200 rounded-2xl p-4 shadow-xs">
+              <div className="text-[11px] font-bold text-blue-700 uppercase tracking-wider">In Review</div>
+              <div className="text-2xl font-black text-blue-900 mt-1">
+                {inquiries.filter((i) => i.status === 'in_review').length}
+              </div>
+            </div>
+            <div className="bg-emerald-50/60 border border-emerald-200 rounded-2xl p-4 shadow-xs">
+              <div className="text-[11px] font-bold text-emerald-700 uppercase tracking-wider">Resolved</div>
+              <div className="text-2xl font-black text-emerald-900 mt-1">
+                {inquiries.filter((i) => i.status === 'resolved').length}
+              </div>
+            </div>
+          </div>
+
+          {/* Controls: Filter & Search */}
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 bg-white p-3 rounded-2xl border border-slate-200 shadow-xs">
+            <div className="flex items-center gap-1.5 overflow-x-auto pb-1 sm:pb-0 text-xs font-bold">
+              {[
+                { id: 'all', label: `All (${inquiries.length})` },
+                { id: 'new', label: `New (${inquiries.filter((i) => i.status === 'new').length})` },
+                { id: 'in_review', label: `In Review (${inquiries.filter((i) => i.status === 'in_review').length})` },
+                { id: 'resolved', label: `Resolved (${inquiries.filter((i) => i.status === 'resolved').length})` },
+                { id: 'spam', label: `Spam (${inquiries.filter((i) => i.status === 'spam').length})` },
+              ].map((tab) => (
+                <button
+                  key={tab.id}
+                  onClick={() => setInquiryStatusFilter(tab.id)}
+                  className={`px-3 py-1.5 rounded-xl transition whitespace-nowrap ${
+                    inquiryStatusFilter === tab.id
+                      ? 'bg-rose-600 text-white shadow-xs'
+                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                  }`}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+
+            <div className="relative w-full sm:w-64">
+              <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+              <input
+                type="text"
+                value={inquirySearch}
+                onChange={(e) => setInquirySearch(e.target.value)}
+                placeholder="Search name, phone, order..."
+                className="w-full pl-8 pr-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-rose-500/20 focus:border-rose-500"
+              />
+            </div>
+          </div>
+
+          {/* Inquiries List */}
+          {isLoadingInquiries && inquiries.length === 0 ? (
+            <div className="p-12 text-center bg-white border border-slate-200 rounded-3xl shadow-xs">
+              <RefreshCw className="w-6 h-6 animate-spin text-rose-600 mx-auto mb-2" />
+              <p className="text-xs text-slate-500">Loading customer inquiries...</p>
+            </div>
+          ) : (
+            (() => {
+              const filtered = inquiries.filter((inq) => {
+                if (inquiryStatusFilter !== 'all' && inq.status !== inquiryStatusFilter) return false;
+                if (inquirySearch.trim()) {
+                  const q = inquirySearch.toLowerCase();
+                  return (
+                    inq.name.toLowerCase().includes(q) ||
+                    (inq.phone && inq.phone.includes(q)) ||
+                    (inq.order_id && inq.order_id.toLowerCase().includes(q)) ||
+                    inq.message.toLowerCase().includes(q)
+                  );
+                }
+                return true;
+              });
+
+              if (filtered.length === 0) {
+                return (
+                  <div className="p-12 text-center bg-white border border-slate-200 rounded-3xl shadow-xs">
+                    <MessageSquare className="w-10 h-10 text-slate-300 mx-auto mb-3" />
+                    <h3 className="text-sm font-black text-slate-800">No inquiries found</h3>
+                    <p className="text-xs text-slate-500 mt-1 max-w-sm mx-auto">
+                      {inquirySearch
+                        ? 'No inquiries match your current search query.'
+                        : 'No inquiries have been recorded for this status filter yet.'}
+                    </p>
+                  </div>
+                );
+              }
+
+              return (
+                <div className="space-y-3">
+                  {filtered.map((inq) => (
+                    <div
+                      key={inq.id}
+                      className={`p-5 rounded-2xl border transition bg-white shadow-xs ${
+                        inq.status === 'new'
+                          ? 'border-amber-300 bg-amber-50/20'
+                          : inq.status === 'in_review'
+                          ? 'border-blue-200 bg-blue-50/10'
+                          : inq.status === 'resolved'
+                          ? 'border-emerald-200'
+                          : 'border-slate-200 opacity-75'
+                      }`}
+                    >
+                      <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
+                        <div className="space-y-1">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-sm font-black text-slate-900">{inq.name}</span>
+                            <span className="font-mono text-[11px] text-slate-400">#{inq.id}</span>
+                            <span
+                              className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider ${
+                                inq.status === 'new'
+                                  ? 'bg-amber-100 text-amber-800'
+                                  : inq.status === 'in_review'
+                                  ? 'bg-blue-100 text-blue-800'
+                                  : inq.status === 'resolved'
+                                  ? 'bg-emerald-100 text-emerald-800'
+                                  : 'bg-slate-200 text-slate-700'
+                              }`}
+                            >
+                              {inq.status.replace('_', ' ')}
+                            </span>
+                            {inq.order_id && (
+                              <span className="px-2 py-0.5 rounded-md text-[10px] font-mono font-bold bg-rose-50 text-rose-700 border border-rose-200">
+                                Order: {inq.order_id}
+                              </span>
+                            )}
+                          </div>
+
+                          <div className="flex items-center gap-3 text-xs text-slate-500 flex-wrap">
+                            {inq.phone && (
+                              <a
+                                href={`tel:${inq.phone}`}
+                                className="inline-flex items-center gap-1 text-rose-600 hover:text-rose-700 font-bold"
+                              >
+                                <PhoneCall className="w-3 h-3" />
+                                <span>{inq.phone}</span>
+                              </a>
+                            )}
+                            <span>•</span>
+                            <span>{new Date(inq.created_at).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })}</span>
+                            <span>•</span>
+                            <span className="font-mono text-[10px] text-slate-400" title="HMAC SHA-256 IP Hash">
+                              IP Hash: {inq.ip_hash.slice(0, 10)}...
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* Status Action Buttons */}
+                        <div className="flex items-center gap-1.5 self-end sm:self-auto shrink-0 flex-wrap">
+                          {inq.status !== 'in_review' && inq.status !== 'resolved' && (
+                            <button
+                              onClick={() => handleUpdateInquiryStatus(inq.id, 'in_review')}
+                              className="px-2.5 py-1.5 rounded-xl text-xs font-bold bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200 transition"
+                            >
+                              Mark In Review
+                            </button>
+                          )}
+                          {inq.status !== 'resolved' && (
+                            <button
+                              onClick={() => handleUpdateInquiryStatus(inq.id, 'resolved')}
+                              className="px-2.5 py-1.5 rounded-xl text-xs font-bold bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200 transition"
+                            >
+                              Mark Resolved
+                            </button>
+                          )}
+                          {inq.status !== 'spam' && (
+                            <button
+                              onClick={() => handleUpdateInquiryStatus(inq.id, 'spam')}
+                              className="px-2.5 py-1.5 rounded-xl text-xs font-bold bg-slate-100 text-slate-600 hover:bg-slate-200 transition"
+                            >
+                              Mark Spam
+                            </button>
+                          )}
+                          {(inq.status === 'resolved' || inq.status === 'spam') && (
+                            <button
+                              onClick={() => handleUpdateInquiryStatus(inq.id, 'new')}
+                              className="px-2.5 py-1.5 rounded-xl text-xs font-bold bg-amber-50 text-amber-800 hover:bg-amber-100 border border-amber-200 transition"
+                            >
+                              Reopen
+                            </button>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Customer Message Body (safely rendered as plain text) */}
+                      <div className="mt-3 p-3.5 rounded-xl bg-slate-50 border border-slate-200/80 text-xs text-slate-800 leading-relaxed whitespace-pre-wrap font-sans select-text">
+                        {inq.message}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              );
+            })()
+          )}
         </div>
       )}
 

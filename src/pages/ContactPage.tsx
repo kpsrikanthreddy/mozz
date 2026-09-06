@@ -11,16 +11,57 @@ interface ContactPageProps {
 
 export const ContactPage: React.FC<ContactPageProps> = ({ routeConfig }) => {
   const [formSubmitted, setFormSubmitted] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const [inquiryId, setInquiryId] = useState<string | null>(null);
   const [formData, setFormData] = useState({
     name: '',
     phone: '',
     orderId: '',
     message: '',
+    website_url: '', // Honeypot field for bot detection
   });
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setFormSubmitted(true);
+    setIsSubmitting(true);
+    setSubmitError(null);
+
+    // Client-side format checks
+    const cleanPhone = formData.phone.trim().replace(/[\s\-()]/g, '');
+    if (cleanPhone && !/^\+?[0-9]{7,15}$/.test(cleanPhone)) {
+      setSubmitError('Please enter a valid phone number (e.g. 10-digit mobile).');
+      setIsSubmitting(false);
+      return;
+    }
+
+    const cleanOrderId = formData.orderId.trim();
+    if (cleanOrderId && !/^[A-Za-z0-9\-_]{4,50}$/.test(cleanOrderId)) {
+      setSubmitError('Please enter a valid Order ID format (e.g. MOZZ-8901).');
+      setIsSubmitting(false);
+      return;
+    }
+
+    try {
+      const response = await fetch('/api/contact', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(formData),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to submit inquiry');
+      }
+
+      setInquiryId(data.inquiryId);
+      setFormSubmitted(true);
+    } catch (err: any) {
+      setSubmitError(err.message || 'An error occurred while submitting your message. Please try again.');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -83,8 +124,14 @@ export const ContactPage: React.FC<ContactPageProps> = ({ routeConfig }) => {
                 Send an Online Message
               </h2>
               <p className="text-stone-600 text-xs sm:text-sm mb-6 leading-relaxed">
-                Fill out the inquiry form below for feedback, bulk party order inquiries, or special catering requests.
+                Fill out the inquiry form below for feedback, order questions, or store inquiries.
               </p>
+
+              {submitError && (
+                <div className="mb-4 p-3.5 bg-red-50 border border-red-200 text-red-700 text-xs sm:text-sm rounded-xl">
+                  {submitError}
+                </div>
+              )}
 
               {formSubmitted ? (
                 <div className="p-6 bg-emerald-50 rounded-xl border border-emerald-200 text-center">
@@ -93,11 +140,29 @@ export const ContactPage: React.FC<ContactPageProps> = ({ routeConfig }) => {
                     Message Received
                   </h3>
                   <p className="text-emerald-700 text-xs sm:text-sm mt-1">
-                    Thank you for reaching out. Our team will review your inquiry.
+                    Thank you for reaching out. Your inquiry has been securely recorded.
                   </p>
+                  {inquiryId && (
+                    <p className="mt-2 text-xs font-mono font-semibold text-emerald-800 bg-emerald-100/60 inline-block px-2.5 py-1 rounded">
+                      Reference: {inquiryId}
+                    </p>
+                  )}
                 </div>
               ) : (
                 <form onSubmit={handleSubmit} className="space-y-4">
+                  {/* Invisible Honeypot Field */}
+                  <div className="hidden" aria-hidden="true">
+                    <label htmlFor="website_url">Website</label>
+                    <input
+                      id="website_url"
+                      type="text"
+                      tabIndex={-1}
+                      autoComplete="off"
+                      value={formData.website_url}
+                      onChange={(e) => setFormData({ ...formData, website_url: e.target.value })}
+                    />
+                  </div>
+
                   <div>
                     <label className="block text-xs font-semibold text-stone-700 mb-1">
                       Your Name
@@ -154,10 +219,11 @@ export const ContactPage: React.FC<ContactPageProps> = ({ routeConfig }) => {
 
                   <button
                     type="submit"
-                    className="w-full py-3 px-4 rounded-xl bg-primary-600 hover:bg-primary-500 text-white font-semibold text-sm transition flex items-center justify-center gap-2 shadow-xs"
+                    disabled={isSubmitting}
+                    className="w-full py-3 px-4 rounded-xl bg-primary-600 hover:bg-primary-500 disabled:opacity-50 text-white font-semibold text-sm transition flex items-center justify-center gap-2 shadow-xs"
                   >
                     <Send className="w-4 h-4" />
-                    <span>Submit Inquiry</span>
+                    <span>{isSubmitting ? 'Sending Message...' : 'Submit Inquiry'}</span>
                   </button>
                 </form>
               )}

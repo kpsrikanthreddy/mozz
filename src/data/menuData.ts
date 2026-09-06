@@ -7,7 +7,7 @@ export const SHAPE_DETAILS = {
     tagline: 'Bigger bites, more delight',
     tier: 'Regular',
     description: 'Crispy rectangular pocket crust packed with molten cheese & hearty toppings.',
-    serves: 'Serves 1-2',
+    serves: 'Regular Pocket Size',
     icon: 'rectangle',
   },
   C: {
@@ -16,7 +16,7 @@ export const SHAPE_DETAILS = {
     tagline: 'Classic shape, timeless taste',
     tier: 'Classic',
     description: 'Traditional round deep-dish Korean pocket with balanced crust-to-cheese ratio.',
-    serves: 'Serves 2-3',
+    serves: 'Classic Pocket Size',
     icon: 'circle',
   },
   S: {
@@ -25,7 +25,7 @@ export const SHAPE_DETAILS = {
     tagline: 'Perfect edges, perfect share',
     tier: 'Signature',
     description: 'Signature large square pocket loaded with extra melted cheese and premium fillings.',
-    serves: 'Serves 3-4',
+    serves: 'Shareable Pocket Size',
     icon: 'square',
   },
 } as const;

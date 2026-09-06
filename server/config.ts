@@ -3,7 +3,7 @@ import crypto from 'crypto';
 
 const developmentSecrets = new Map<string, string>();
 
-function getSigningSecret(name: 'JWT_SECRET' | 'QR_SIGNING_SECRET'): string {
+function getSigningSecret(name: 'JWT_SECRET' | 'QR_SIGNING_SECRET' | 'IP_HASH_SECRET'): string {
   const configured = process.env[name]?.trim();
   if (configured) return configured;
 
@@ -22,3 +22,7 @@ function getSigningSecret(name: 'JWT_SECRET' | 'QR_SIGNING_SECRET'): string {
 
 export const JWT_SECRET = getSigningSecret('JWT_SECRET');
 export const QR_SIGNING_SECRET = getSigningSecret('QR_SIGNING_SECRET');
+export function getIpHashSecret(): string {
+  return getSigningSecret('IP_HASH_SECRET');
+}
+

@@ -3,14 +3,8 @@ import path from 'path';
 import React from 'react';
 import { renderToString } from 'react-dom/server';
 import App from '../src/App';
-import { PUBLIC_ROUTES, getRouteConfig } from '../src/routes';
-import {
-  BUSINESS_INFO,
-  CANONICAL_DOMAIN,
-  generateRestaurantJsonLd,
-  generateBreadcrumbJsonLd,
-  generateFaqJsonLd,
-} from '../src/config/businessInfo';
+import { PUBLIC_ROUTES, getRouteJsonLd, NOT_FOUND_ROUTE } from '../src/routes';
+import { BUSINESS_INFO, CANONICAL_DOMAIN } from '../src/config/businessInfo';
 
 function escapeHtml(str: string): string {
   return str
@@ -33,50 +27,44 @@ async function runPrerender() {
 
   const baseTemplate = fs.readFileSync(templatePath, 'utf-8');
 
-  // 1. Generate Static HTML for all 15 Public SEO Routes
+  // 1. Generate Static HTML for all 15 Public SEO Routes (Clean HTML strategy: dist/slug.html, dist/index.html)
   for (const route of PUBLIC_ROUTES) {
     console.log(`  ⚡ Pre-rendering: ${route.path} (${route.name})`);
 
     // Render component tree to static markup
     const appHtml = renderToString(React.createElement(App, { initialPath: route.path }));
 
-    // Prepare JSON-LD schemas
-    const restaurantJsonLd = generateRestaurantJsonLd();
-    const breadcrumbJsonLd = generateBreadcrumbJsonLd(route.breadcrumbs);
-    const faqJsonLd = generateFaqJsonLd(route.faqs);
+    // Use central getRouteJsonLd function from src/routes.ts
+    const schemas = getRouteJsonLd(route);
+    const structuredDataScripts = schemas.map(
+      (schema) =>
+        `<script type="application/ld+json">\n${JSON.stringify(schema, null, 2)}\n</script>`
+    );
 
-    const structuredDataScripts = [
-      `<script type="application/ld+json">\n${JSON.stringify(restaurantJsonLd, null, 2)}\n</script>`,
-      `<script type="application/ld+json">\n${JSON.stringify(breadcrumbJsonLd, null, 2)}\n</script>`,
-    ];
-
-    if (faqJsonLd) {
-      structuredDataScripts.push(
-        `<script type="application/ld+json">\n${JSON.stringify(faqJsonLd, null, 2)}\n</script>`
-      );
-    }
-
+    // Canonical URL: root gets '/', all others have no trailing slash
     const canonicalUrl = `${CANONICAL_DOMAIN}${route.path === '/' ? '/' : route.path}`;
 
     const headInjections = `
     <!-- Primary SEO Metadata -->
     <title>${escapeHtml(route.title)}</title>
-    <meta name="description" content="${escapeHtml(route.description)}" />
+    <meta name="description" content="${escapeHtml(route.metaDescription)}" />
+    <meta name="robots" content="index, follow" />
+    <meta name="googlebot" content="index, follow" />
     <link rel="canonical" href="${canonicalUrl}" />
 
-    <!-- Open Graph / Facebook -->
+    <!-- Open Graph -->
     <meta property="og:type" content="website" />
     <meta property="og:url" content="${canonicalUrl}" />
     <meta property="og:title" content="${escapeHtml(route.title)}" />
-    <meta property="og:description" content="${escapeHtml(route.description)}" />
+    <meta property="og:description" content="${escapeHtml(route.metaDescription)}" />
     <meta property="og:site_name" content="${escapeHtml(BUSINESS_INFO.platformName)}" />
 
-    <!-- Twitter Card -->
-    <meta name="twitter:card" content="summary_large_image" />
+    <!-- Twitter Card (summary mode without unsupplied large image) -->
+    <meta name="twitter:card" content="summary" />
     <meta name="twitter:title" content="${escapeHtml(route.title)}" />
-    <meta name="twitter:description" content="${escapeHtml(route.description)}" />
+    <meta name="twitter:description" content="${escapeHtml(route.metaDescription)}" />
 
-    <!-- JSON-LD Structured Data -->
+    <!-- Central JSON-LD Structured Data -->
     ${structuredDataScripts.join('\n    ')}
     `;
 
@@ -86,7 +74,10 @@ async function runPrerender() {
       .replace(/<meta\s+name="description"[\s\S]*?>/gi, '')
       .replace(/<link\s+rel="canonical"[\s\S]*?>/gi, '')
       .replace(/<meta\s+property="og:[^"]*"[\s\S]*?>/gi, '')
-      .replace(/<meta\s+name="twitter:[^"]*"[\s\S]*?>/gi, '');
+      .replace(/<meta\s+name="twitter:[^"]*"[\s\S]*?>/gi, '')
+      .replace(/<meta\s+name="robots"[\s\S]*?>/gi, '')
+      .replace(/<meta\s+name="googlebot"[\s\S]*?>/gi, '')
+      .replace(/<script\s+type="application\/ld\+json"[\s\S]*?<\/script>/gi, '');
 
     // Inject head tags right before </head>
     pageHtml = pageHtml.replace('</head>', `${headInjections}\n  </head>`);
@@ -97,27 +88,31 @@ async function runPrerender() {
       `<div id="root">${appHtml}</div>`
     );
 
-    // Determine target output paths
+    // Save strictly to clean target file without duplicate subdirectories
     if (route.path === '/') {
       fs.writeFileSync(path.join(distDir, 'index.html'), pageHtml, 'utf-8');
     } else {
       const cleanSlug = route.path.replace(/^\//, '');
-      const routeDir = path.join(distDir, cleanSlug);
-      if (!fs.existsSync(routeDir)) {
-        fs.mkdirSync(routeDir, { recursive: true });
+      const singleHtmlPath = path.join(distDir, `${cleanSlug}.html`);
+      fs.writeFileSync(singleHtmlPath, pageHtml, 'utf-8');
+
+      // If duplicate directory dist/slug exists from previous runs, remove it to prevent express.static directory redirects
+      const duplicateDir = path.join(distDir, cleanSlug);
+      if (fs.existsSync(duplicateDir) && fs.lstatSync(duplicateDir).isDirectory()) {
+        fs.rmSync(duplicateDir, { recursive: true, force: true });
       }
-      fs.writeFileSync(path.join(routeDir, 'index.html'), pageHtml, 'utf-8');
-      fs.writeFileSync(path.join(distDir, `${cleanSlug}.html`), pageHtml, 'utf-8');
     }
   }
 
-  // 2. Pre-render 404 Not Found Page
+  // 2. Pre-render 404 Not Found Page (dist/404.html only)
   console.log('  ⚡ Pre-rendering 404 Not Found Page (/404)');
   const notFoundHtml = renderToString(React.createElement(App, { initialPath: '/404' }));
   const notFoundHead = `
     <title>Page Not Found (404) | Starters4U</title>
     <meta name="description" content="The page you requested could not be found on Starters4U." />
     <meta name="robots" content="noindex, follow" />
+    <meta name="googlebot" content="noindex, follow" />
+    <meta name="twitter:card" content="summary" />
   `;
 
   let notFoundPage = baseTemplate
@@ -126,7 +121,9 @@ async function runPrerender() {
     .replace(/<link\s+rel="canonical"[\s\S]*?>/gi, '')
     .replace(/<meta\s+property="og:[^"]*"[\s\S]*?>/gi, '')
     .replace(/<meta\s+name="twitter:[^"]*"[\s\S]*?>/gi, '')
-    .replace(/<meta\s+name="robots"[\s\S]*?>/gi, '');
+    .replace(/<meta\s+name="robots"[\s\S]*?>/gi, '')
+    .replace(/<meta\s+name="googlebot"[\s\S]*?>/gi, '')
+    .replace(/<script\s+type="application\/ld\+json"[\s\S]*?<\/script>/gi, '');
 
   notFoundPage = notFoundPage.replace('</head>', `${notFoundHead}\n  </head>`);
   notFoundPage = notFoundPage.replace(
@@ -135,34 +132,17 @@ async function runPrerender() {
   );
 
   fs.writeFileSync(path.join(distDir, '404.html'), notFoundPage, 'utf-8');
-  const notFoundDir = path.join(distDir, '404');
-  if (!fs.existsSync(notFoundDir)) {
-    fs.mkdirSync(notFoundDir, { recursive: true });
+  const duplicate404Dir = path.join(distDir, '404');
+  if (fs.existsSync(duplicate404Dir) && fs.lstatSync(duplicate404Dir).isDirectory()) {
+    fs.rmSync(duplicate404Dir, { recursive: true, force: true });
   }
-  fs.writeFileSync(path.join(notFoundDir, 'index.html'), notFoundPage, 'utf-8');
 
-  // 3. Generate Valid sitemap.xml
+  // 3. Generate Clean, Valid sitemap.xml without fabricated lastmod, changefreq, or priority
   console.log('  📑 Generating XML Sitemap with 15 public routes...');
   const sitemapEntries = PUBLIC_ROUTES.map((route) => {
     const loc = `${CANONICAL_DOMAIN}${route.path === '/' ? '/' : route.path}`;
-    const priority =
-      route.path === '/'
-        ? '1.0'
-        : route.path === '/menu'
-        ? '0.9'
-        : route.path.startsWith('/privacy') ||
-          route.path.startsWith('/terms') ||
-          route.path.startsWith('/refund')
-        ? '0.5'
-        : '0.8';
-
-    const changefreq = route.path === '/' || route.path === '/menu' ? 'daily' : 'weekly';
-
     return `  <url>
     <loc>${loc}</loc>
-    <lastmod>2026-09-06</lastmod>
-    <changefreq>${changefreq}</changefreq>
-    <priority>${priority}</priority>
   </url>`;
   }).join('\n');
 
@@ -173,9 +153,12 @@ ${sitemapEntries}
 `;
 
   fs.writeFileSync(path.join(distDir, 'sitemap.xml'), sitemapXml, 'utf-8');
-  fs.writeFileSync(path.resolve(process.cwd(), 'public', 'sitemap.xml'), sitemapXml, 'utf-8');
+  const publicDir = path.resolve(process.cwd(), 'public');
+  if (fs.existsSync(publicDir)) {
+    fs.writeFileSync(path.join(publicDir, 'sitemap.xml'), sitemapXml, 'utf-8');
+  }
 
-  console.log('✅ [SSG Pre-renderer] All 15 routes pre-rendered, 404 generated, and sitemap.xml saved!');
+  console.log('✅ [SSG Pre-renderer] All 15 routes pre-rendered, 404 generated, and clean sitemap.xml saved!');
 }
 
 runPrerender().catch((err) => {

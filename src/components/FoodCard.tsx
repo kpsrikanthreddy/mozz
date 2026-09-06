@@ -19,6 +19,7 @@ export const FoodCard: React.FC<FoodCardProps> = ({ item }) => {
 
   // Default shape for pocket pizzas is 'C' (Circular - Classic)
   const [selectedShape, setSelectedShape] = useState<PizzaShape>('C');
+  const [imageError, setImageError] = useState(false);
 
   // Check if item is already in cart
   const cartItemsForThisProduct = cart.filter((c) => c.menuItem.id === item.id);
@@ -125,6 +126,18 @@ export const FoodCard: React.FC<FoodCardProps> = ({ item }) => {
     >
       {/* Card Header: Dietary Icon, Badges, Spicy Indicator */}
       <div>
+        {item.image && !imageError && (
+          <div className="relative w-full h-36 mb-3 rounded-xl overflow-hidden bg-slate-100 border border-slate-200">
+            <img
+              src={item.image}
+              alt={item.name}
+              loading="lazy"
+              onError={() => setImageError(true)}
+              className="w-full h-full object-cover"
+            />
+          </div>
+        )}
+
         <div className="flex items-start justify-between gap-2 mb-2">
           <div className="flex items-center gap-2">
             {renderDietaryIcon()}

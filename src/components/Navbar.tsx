@@ -360,7 +360,7 @@ export const Navbar: React.FC<NavbarProps> = ({
               >
                 <span className="text-3xl">🛵</span>
                 <span className="text-xs font-bold">Home Delivery</span>
-                <span className="text-[10px] text-slate-500">Delivered hot to doorstep</span>
+                <span className="text-[10px] text-slate-500">Delivered to your location</span>
               </button>
 
               <button

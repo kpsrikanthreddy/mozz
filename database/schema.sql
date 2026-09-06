@@ -569,3 +569,49 @@ CREATE INDEX IF NOT EXISTS idx_print_jobs_created_at ON print_jobs(created_at DE
 CREATE INDEX IF NOT EXISTS idx_print_job_attempts_job_id ON print_job_attempts(job_id);
 CREATE INDEX IF NOT EXISTS idx_pairing_codes_lookup ON device_pairing_codes(code, is_used, expires_at);
 
+-- ==========================================================
+-- 20. CUSTOMER INQUIRIES & MULTI-TENANT PERSISTENCE
+-- ==========================================================
+CREATE TABLE IF NOT EXISTS customer_inquiries (
+    id VARCHAR(64) PRIMARY KEY,
+    restaurant_id UUID REFERENCES restaurants(id) ON DELETE CASCADE,
+    branch_id UUID REFERENCES restaurant_branches(id) ON DELETE SET NULL,
+    name VARCHAR(100) NOT NULL,
+    phone VARCHAR(50),
+    order_id VARCHAR(50),
+    message TEXT NOT NULL,
+    status VARCHAR(30) NOT NULL DEFAULT 'new' CHECK (status IN ('new', 'in_review', 'resolved', 'spam')),
+    ip_hash VARCHAR(64) NOT NULL,
+    user_agent TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+ALTER TABLE customer_inquiries ADD COLUMN IF NOT EXISTS restaurant_id UUID REFERENCES restaurants(id) ON DELETE CASCADE;
+ALTER TABLE customer_inquiries ADD COLUMN IF NOT EXISTS branch_id UUID REFERENCES restaurant_branches(id) ON DELETE SET NULL;
+ALTER TABLE customer_inquiries ADD COLUMN IF NOT EXISTS phone VARCHAR(50);
+ALTER TABLE customer_inquiries ADD COLUMN IF NOT EXISTS order_id VARCHAR(50);
+ALTER TABLE customer_inquiries ADD COLUMN IF NOT EXISTS status VARCHAR(30) DEFAULT 'new';
+ALTER TABLE customer_inquiries ADD COLUMN IF NOT EXISTS ip_hash VARCHAR(64);
+ALTER TABLE customer_inquiries ADD COLUMN IF NOT EXISTS user_agent TEXT;
+ALTER TABLE customer_inquiries ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
+
+CREATE INDEX IF NOT EXISTS idx_customer_inquiries_tenant ON customer_inquiries(restaurant_id, branch_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_customer_inquiries_tenant_status ON customer_inquiries(restaurant_id, status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_customer_inquiries_created_at ON customer_inquiries(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_customer_inquiries_ip_hash ON customer_inquiries(ip_hash, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_customer_inquiries_order_id ON customer_inquiries(order_id);
+
+-- ==========================================================
+-- 21. DURABLE DISTRIBUTED RATE LIMITS
+-- ==========================================================
+CREATE TABLE IF NOT EXISTS distributed_rate_limits (
+    key VARCHAR(128) PRIMARY KEY,
+    hit_count INT NOT NULL DEFAULT 1,
+    reset_at TIMESTAMPTZ NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_rate_limits_reset_at ON distributed_rate_limits(reset_at);
+

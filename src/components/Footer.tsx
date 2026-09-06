@@ -82,7 +82,7 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate, onOpenShapeGuide }) 
               </div>
               <div className="flex items-start gap-2 pt-1">
                 <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
-                <span>Strictly separated veg & non-veg kitchen stations.</span>
+                <span>Clear vegetarian & non-vegetarian menu labeling.</span>
               </div>
             </div>
           </div>

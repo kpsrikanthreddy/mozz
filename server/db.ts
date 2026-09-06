@@ -80,6 +80,8 @@ export interface InMemoryDbState {
   print_jobs: any[];
   print_job_attempts: any[];
   device_pairing_codes: any[];
+  customer_inquiries?: any[];
+  distributed_rate_limits?: any[];
 }
 
 export const inMemoryDb: InMemoryDbState = {
@@ -209,6 +211,8 @@ export const inMemoryDb: InMemoryDbState = {
   printer_configurations: [],
   print_jobs: [],
   print_job_attempts: [],
+  customer_inquiries: [] as any[],
+  distributed_rate_limits: [] as any[],
 };
 
 // Seed sample orders for immediate richness if in memory
@@ -321,6 +325,39 @@ export function seedSampleOrdersInMemory() {
     created_at: new Date(Date.now() - 1000 * 60 * 18).toISOString(),
     updated_at: new Date(Date.now() - 1000 * 60 * 18).toISOString(),
   });
+
+  if (!inMemoryDb.customer_inquiries || inMemoryDb.customer_inquiries.length === 0) {
+    inMemoryDb.customer_inquiries = [
+      {
+        id: 'INQ-SAMPLE-01',
+        restaurant_id: 'a0000000-0000-0000-0000-000000000001',
+        branch_id: 'b0000000-0000-0000-0000-000000000001',
+        name: 'Pooja Hegde',
+        phone: '+919845098765',
+        order_id: 'MOZZ-8901',
+        message: 'Can I add extra Korean garlic dip to my active order MOZZ-8901? Called the kitchen earlier.',
+        status: 'in_review',
+        ip_hash: '9f86d081884c7d659a2feaa0c55ad015',
+        user_agent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X)',
+        created_at: new Date(Date.now() - 1000 * 60 * 45).toISOString(),
+        updated_at: new Date(Date.now() - 1000 * 60 * 30).toISOString(),
+      },
+      {
+        id: 'INQ-SAMPLE-02',
+        restaurant_id: 'a0000000-0000-0000-0000-000000000001',
+        branch_id: 'b0000000-0000-0000-0000-000000000001',
+        name: 'Vikram Mehta',
+        phone: '+919811223344',
+        order_id: null,
+        message: 'Do you offer custom party catering for 30 people on Saturday evening with your rectangular crusts?',
+        status: 'new',
+        ip_hash: '4b227777d4dd1fc61c6f884f48641d02',
+        user_agent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)',
+        created_at: new Date(Date.now() - 1000 * 60 * 120).toISOString(),
+        updated_at: new Date(Date.now() - 1000 * 60 * 120).toISOString(),
+      },
+    ];
+  }
 }
 
 seedSampleOrdersInMemory();
@@ -405,6 +442,14 @@ export async function initializeDatabase(): Promise<{ success: boolean; mode: st
           const seedSql = fs.readFileSync(seedPath, 'utf-8');
           await client.query(seedSql);
           console.info('[DB] Seed data verified/applied (created or modified existing objects).');
+        }
+
+        // Apply contact inquiries & atomic rate limits migration idempotently
+        const contactMigPath = path.join(process.cwd(), 'database', 'migration_contact_and_rate_limits.sql');
+        if (fs.existsSync(contactMigPath)) {
+          const contactMigSql = fs.readFileSync(contactMigPath, 'utf-8');
+          await client.query(contactMigSql);
+          console.info('[DB] Contact inquiries and rate limits migration verified/applied.');
         }
 
         return { success: true, mode: 'postgresql' };

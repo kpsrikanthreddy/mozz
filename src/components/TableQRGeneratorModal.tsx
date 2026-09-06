@@ -488,7 +488,7 @@ export const TableQRGeneratorModal: React.FC<TableQRGeneratorModalProps> = ({
                 </div>
 
                 <div className="mt-3 text-[11px] text-slate-500 text-center">
-                  💡 Tip: Print on standard 5"x7" or A6 acrylic stands for best durability on dining tables.
+                  💡 Tip: Print on standard 5"x7" or A6 acrylic stands for display on dining tables.
                 </div>
               </div>
             </div>

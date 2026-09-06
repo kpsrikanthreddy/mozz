@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, Suspense } from 'react';
 import { StoreProvider, useStore } from './context/StoreContext';
 import { AdminAuthProvider } from './context/AdminAuthContext';
 import { Navbar } from './components/Navbar';
@@ -6,13 +6,9 @@ import { BannerPromise } from './components/BannerPromise';
 import { MenuSection } from './components/MenuSection';
 import { PizzaCustomizerModal } from './components/PizzaCustomizerModal';
 import { CartDrawer } from './components/CartDrawer';
-import { RazorpayCheckoutModal } from './components/RazorpayCheckoutModal';
 import { LiveOrderTracker } from './components/LiveOrderTracker';
-import { ShapeGuideModal } from './components/ShapeGuideModal';
 import { CustomerDetailsModal } from './components/CustomerDetailsModal';
 import { Footer } from './components/Footer';
-import { AdminApp } from './components/admin/AdminApp';
-import { PlatformAdminApp } from './components/admin/PlatformAdminApp';
 import { HomePage } from './pages/HomePage';
 import { MenuPage } from './pages/MenuPage';
 import { CategoryPage } from './pages/CategoryPage';
@@ -22,8 +18,23 @@ import { DeliveryPage } from './pages/DeliveryPage';
 import { PolicyPage } from './pages/PolicyPage';
 import { NotFoundPage } from './pages/NotFoundPage';
 import { getRouteConfig, PUBLIC_ROUTES } from './routes';
+import { updateDocumentMetadata } from './utils/updateDocumentMetadata';
 import { FoodCategory, Order } from './types';
-import { ShoppingBag, ArrowRight } from 'lucide-react';
+import { ShoppingBag, ArrowRight, Loader2 } from 'lucide-react';
+
+// Code-split heavy interactive and admin components (Item 12)
+const AdminApp = React.lazy(() =>
+  import('./components/admin/AdminApp').then((m) => ({ default: m.AdminApp }))
+);
+const PlatformAdminApp = React.lazy(() =>
+  import('./components/admin/PlatformAdminApp').then((m) => ({ default: m.PlatformAdminApp }))
+);
+const RazorpayCheckoutModal = React.lazy(() =>
+  import('./components/RazorpayCheckoutModal').then((m) => ({ default: m.RazorpayCheckoutModal }))
+);
+const ShapeGuideModal = React.lazy(() =>
+  import('./components/ShapeGuideModal').then((m) => ({ default: m.ShapeGuideModal }))
+);
 
 interface CustomerAppProps {
   currentPath: string;
@@ -43,25 +54,24 @@ const CustomerApp: React.FC<CustomerAppProps> = ({ currentPath, onNavigatePath }
     setIsCustomerModalOpen,
   } = useStore();
 
-  const [currentView, setCurrentView] = useState<'page' | 'track'>(() => {
-    if (typeof window !== 'undefined') {
-      const params = new URLSearchParams(window.location.search);
-      if (params.get('view') === 'track' || window.location.pathname === '/track') {
-        return 'track';
-      }
-    }
-    return 'page';
-  });
+  // Fix Tracker Hydration (Item 11): Keep server and client HTML matched during initial mount ('page'),
+  // then transition view in an effect after hydration completes.
+  const [currentView, setCurrentView] = useState<'page' | 'track'>('page');
 
   const [isShapeGuideOpen, setIsShapeGuideOpen] = useState(false);
   const [isCheckoutOpen, setIsCheckoutOpen] = useState(false);
 
-  // Sync view state if URL query has ?view=track
+  // Sync view state if URL query has ?view=track after mount
   useEffect(() => {
     if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get('view') === 'track' || window.location.pathname === '/track') {
+        setCurrentView('track');
+      }
+
       const handlePop = () => {
-        const params = new URLSearchParams(window.location.search);
-        if (params.get('view') === 'track' || window.location.pathname === '/track') {
+        const p = new URLSearchParams(window.location.search);
+        if (p.get('view') === 'track' || window.location.pathname === '/track') {
           setCurrentView('track');
         } else {
           setCurrentView('page');
@@ -83,6 +93,13 @@ const CustomerApp: React.FC<CustomerAppProps> = ({ currentPath, onNavigatePath }
   // Find SEO route config
   const normalizedPath = currentPath.split('?')[0].replace(/\/$/, '') || '/';
   const routeConfig = getRouteConfig(normalizedPath);
+
+  // Implement Client-Side Metadata Updates (Item 7 & Task 5 route-aware head cleanup)
+  useEffect(() => {
+    updateDocumentMetadata(routeConfig, normalizedPath, {
+      isTracking: currentView === 'track' || normalizedPath === '/track' || currentPath.includes('view=track'),
+    });
+  }, [routeConfig, normalizedPath, currentView, currentPath]);
 
   // Render the appropriate main content based on route
   const renderMainContent = () => {
@@ -213,16 +230,24 @@ const CustomerApp: React.FC<CustomerAppProps> = ({ currentPath, onNavigatePath }
         }}
       />
 
-      <RazorpayCheckoutModal
-        isOpen={isCheckoutOpen}
-        onClose={() => setIsCheckoutOpen(false)}
-        onOrderCompleted={handleOrderCompleted}
-      />
+      {isCheckoutOpen && (
+        <Suspense fallback={null}>
+          <RazorpayCheckoutModal
+            isOpen={isCheckoutOpen}
+            onClose={() => setIsCheckoutOpen(false)}
+            onOrderCompleted={handleOrderCompleted}
+          />
+        </Suspense>
+      )}
 
-      <ShapeGuideModal
-        isOpen={isShapeGuideOpen}
-        onClose={() => setIsShapeGuideOpen(false)}
-      />
+      {isShapeGuideOpen && (
+        <Suspense fallback={null}>
+          <ShapeGuideModal
+            isOpen={isShapeGuideOpen}
+            onClose={() => setIsShapeGuideOpen(false)}
+          />
+        </Suspense>
+      )}
 
       {/* Floating Mobile Cart Bar */}
       {itemCount > 0 && currentView !== 'track' && (
@@ -326,13 +351,36 @@ export default function App({ initialPath }: { initialPath?: string }) {
     currentHost.startsWith('admin.') ||
     currentPath.startsWith('/restaurant-admin');
 
+  // Ensure administrative and platform admin portals immediately set private noindex directives
+  useEffect(() => {
+    if (isPlatformAdmin || isAdminPortal) {
+      updateDocumentMetadata(undefined, currentPath, { isAdmin: true });
+    }
+  }, [isPlatformAdmin, isAdminPortal, currentPath]);
+
   return (
     <StoreProvider>
       <AdminAuthProvider>
         {isPlatformAdmin ? (
-          <PlatformAdminApp />
+          <Suspense
+            fallback={
+              <div className="min-h-screen bg-slate-900 flex items-center justify-center text-white">
+                <Loader2 className="w-8 h-8 animate-spin text-rose-500" />
+              </div>
+            }
+          >
+            <PlatformAdminApp />
+          </Suspense>
         ) : isAdminPortal ? (
-          <AdminApp />
+          <Suspense
+            fallback={
+              <div className="min-h-screen bg-slate-900 flex items-center justify-center text-white">
+                <Loader2 className="w-8 h-8 animate-spin text-rose-500" />
+              </div>
+            }
+          >
+            <AdminApp />
+          </Suspense>
         ) : (
           <CustomerApp currentPath={currentPath} onNavigatePath={navigateTo} />
         )}

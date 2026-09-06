@@ -168,7 +168,7 @@ export const RazorpayCheckoutModal: React.FC<RazorpayCheckoutModalProps> = ({
           currency: 'INR',
           name: 'MOZZ Chinese & Pizzateria',
           description: 'Korean Pocket Pizzas & Chinese Specials',
-          image: 'https://images.unsplash.com/photo-1513104890138-7c749659a591?w=128&auto=format&fit=crop&q=80',
+          image: '/favicon.svg',
           prefill: {
             name: customerDetails.name || 'MOZZ Customer',
             contact: customerDetails.phone || '8179620607',

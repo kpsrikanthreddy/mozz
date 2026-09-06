@@ -4,7 +4,7 @@ import crypto from 'crypto';
 import cookieParser from 'cookie-parser';
 import Razorpay from 'razorpay';
 import dotenv from 'dotenv';
-import { initializeDatabase, isPostgresRunning, inMemoryDb } from './db.js';
+import { initializeDatabase, isPostgresRunning, inMemoryDb, query } from './db.js';
 import * as menuService from './services/menuService.js';
 import * as orderService from './services/orderService.js';
 import * as customerService from './services/customerService.js';
@@ -14,6 +14,7 @@ import * as adminService from './services/adminService.js';
 import * as printService from './services/printService.js';
 import { requireAuth, requireRole, verifyAuthToken } from './middleware/authMiddleware.js';
 import { requireDeviceAuth } from './middleware/deviceAuthMiddleware.js';
+import { getIpHashSecret } from './config.js';
 
 dotenv.config();
 
@@ -63,6 +64,9 @@ export async function ensureInitialized(): Promise<void> {
 
 export function createApp(): express.Application {
   const app = express();
+
+  // Enable trust proxy for secure, accurate client IP handling behind reverse proxies (Vercel, Cloud Run, Nginx)
+  app.set('trust proxy', 1);
 
   // Basic Middlewares
   app.use(express.json());
@@ -1191,7 +1195,444 @@ export function createApp(): express.Application {
   app.post('/api/verify-payment', handleVerifyPayment);
   app.post('/api/razorpay/verify-payment', handleVerifyPayment);
 
+  // ==========================================================
+  // DISTRIBUTED RATE LIMITER & SAFE PROXY IP HANDLING
+  // ==========================================================
+  // Exported helpers for verification & unit testing
+  // ==========================================================
+  const memoryRateLimitStore = new Map<string, { count: number; resetAt: number }>();
+
+  // ==========================================================
+  // CUSTOMER INQUIRIES STAFF PORTAL ENDPOINTS (Tenant-Isolated)
+  // ==========================================================
+  app.get('/api/admin/inquiries', requireAuth, async (req, res) => {
+    try {
+      const restaurantId = req.user!.restaurantId;
+      const statusFilter = req.query.status as string;
+
+      if (isPostgresRunning()) {
+        let sql = `
+          SELECT id, restaurant_id, branch_id, name, phone, order_id, message, status, ip_hash, user_agent, created_at, updated_at
+          FROM customer_inquiries
+          WHERE restaurant_id = $1
+        `;
+        const params: any[] = [restaurantId];
+        if (statusFilter && ['new', 'in_review', 'resolved', 'spam'].includes(statusFilter)) {
+          params.push(statusFilter);
+          sql += ` AND status = $${params.length}`;
+        }
+        sql += ` ORDER BY created_at DESC LIMIT 200`;
+        const result = await query(sql, params);
+        return res.json(result.rows);
+      } else {
+        const inquiries = (inMemoryDb as any).customer_inquiries || [];
+        let filtered = inquiries.filter((i: any) => i.restaurant_id === restaurantId);
+        if (statusFilter && ['new', 'in_review', 'resolved', 'spam'].includes(statusFilter)) {
+          filtered = filtered.filter((i: any) => i.status === statusFilter);
+        }
+        filtered.sort((a: any, b: any) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+        return res.json(filtered.slice(0, 200));
+      }
+    } catch (err: any) {
+      console.error('[Admin API] Error fetching inquiries:', err.message);
+      res.status(500).json({ error: 'Failed to fetch inquiries', details: err.message });
+    }
+  });
+
+  app.patch('/api/admin/inquiries/:id/status', requireAuth, async (req, res) => {
+    try {
+      const restaurantId = req.user!.restaurantId;
+      const inquiryId = req.params.id;
+      const { status } = req.body;
+
+      if (!status || !['new', 'in_review', 'resolved', 'spam'].includes(status)) {
+        return res.status(400).json({
+          error: "Invalid status value. Permitted values: 'new', 'in_review', 'resolved', 'spam'.",
+        });
+      }
+
+      if (isPostgresRunning()) {
+        const result = await query(
+          `UPDATE customer_inquiries
+           SET status = $1, updated_at = NOW()
+           WHERE id = $2 AND restaurant_id = $3
+           RETURNING *`,
+          [status, inquiryId, restaurantId]
+        );
+        if (result.rows.length === 0) {
+          return res.status(404).json({ error: 'Inquiry not found in your restaurant' });
+        }
+        return res.json(result.rows[0]);
+      } else {
+        const inquiries = (inMemoryDb as any).customer_inquiries || [];
+        const index = inquiries.findIndex((i: any) => i.id === inquiryId && i.restaurant_id === restaurantId);
+        if (index === -1) {
+          return res.status(404).json({ error: 'Inquiry not found in your restaurant' });
+        }
+        inquiries[index].status = status;
+        inquiries[index].updated_at = new Date().toISOString();
+        return res.json(inquiries[index]);
+      }
+    } catch (err: any) {
+      console.error('[Admin API] Error updating inquiry status:', err.message);
+      res.status(500).json({ error: 'Failed to update inquiry status', details: err.message });
+    }
+  });
+
+  // ==========================================================
+  // CUSTOMER CONTACT & INQUIRIES ENDPOINT
+  // ==========================================================
+  app.post('/api/contact', async (req, res) => {
+    try {
+      // 1. Honeypot check for automated spam submissions
+      if (req.body.website_url || req.body.honeypot) {
+        return res.status(400).json({ error: 'Invalid submission parameters detected.' });
+      }
+
+      // 2. Input validation & normalization
+      const { name, phone, orderId, message, restaurantId: rawRestId, branchId: rawBranchId } = req.body;
+
+      if (!name || typeof name !== 'string' || name.trim().length < 2 || name.trim().length > 100) {
+        return res.status(400).json({ error: 'Please enter a valid name (2 to 100 characters).' });
+      }
+
+      if (!message || typeof message !== 'string' || message.trim().length < 10 || message.trim().length > 2000) {
+        return res.status(400).json({ error: 'Please enter a message between 10 and 2000 characters.' });
+      }
+
+      let normalizedPhone: string | null = null;
+      if (phone !== undefined && phone !== null && String(phone).trim().length > 0) {
+        const cleanedPhone = String(phone).trim().replace(/[\s\-()]/g, '');
+        if (!/^\+?[0-9]{7,15}$/.test(cleanedPhone)) {
+          return res.status(400).json({ error: 'Please enter a valid phone number format (7 to 15 digits).' });
+        }
+        normalizedPhone = cleanedPhone;
+      }
+
+      let normalizedOrderId: string | null = null;
+      if (orderId !== undefined && orderId !== null && String(orderId).trim().length > 0) {
+        const cleanedOrderId = String(orderId).trim().toUpperCase();
+        if (!/^[A-Z0-9\-_]{4,50}$/.test(cleanedOrderId)) {
+          return res.status(400).json({ error: 'Please enter a valid Order ID format (e.g. MOZZ-8901).' });
+        }
+        normalizedOrderId = cleanedOrderId;
+      }
+
+      // 3. Safe client IP and rate limiting
+      let clientIp: string;
+      let ipHash: string;
+      try {
+        clientIp = getSafeClientIp(req);
+        ipHash = hashIpForAudit(clientIp);
+      } catch (hashErr: any) {
+        console.error('[Contact API] IP hashing error:', hashErr.message);
+        if (process.env.NODE_ENV === 'production') {
+          return res.status(500).json({
+            error: 'Server security configuration error. IP hashing unavailable.',
+          });
+        }
+        ipHash = 'dev-unconfigured-ip-hash';
+      }
+
+      const rateLimitKey = `contact:${ipHash}`;
+
+      let rateLimit;
+      try {
+        rateLimit = await checkDistributedRateLimit(rateLimitKey, 5, 15 * 60 * 1000);
+      } catch (rlErr: any) {
+        console.error('[Contact API] Distributed rate limiter error:', rlErr.message);
+        if (rlErr.message === 'DISTRIBUTED_RATE_LIMITER_UNAVAILABLE' || process.env.NODE_ENV === 'production') {
+          return res.status(503).json({
+            error: 'Inquiry service temporarily unavailable. Distributed rate limiter service offline.',
+          });
+        }
+        rateLimit = { allowed: true, remaining: 1, resetAt: Date.now() + 60000, isDurable: false };
+      }
+
+      if (!rateLimit.isDurable) {
+        res.setHeader('X-RateLimit-Distributed', 'pending-durable-store');
+      }
+
+      if (!rateLimit.allowed) {
+        const retryAfterSeconds = Math.max(1, Math.ceil((rateLimit.resetAt - Date.now()) / 1000));
+        res.setHeader('Retry-After', retryAfterSeconds.toString());
+        return res.status(429).json({
+          error: 'Too many contact inquiries from your network. Please wait a few minutes before submitting again.',
+        });
+      }
+
+      // Normalized plain text stored in database (DO NOT permanently HTML-encode before storage to preserve fidelity)
+      const cleanName = name.trim();
+      const cleanMessage = message.trim();
+
+      // Multi-tenant resolution: derive trusted tenant context, never trust arbitrary client IDs
+      const tenantContext = await resolveTrustedTenantForInquiry(normalizedOrderId, rawRestId, rawBranchId);
+
+      const inquiryId = `INQ-${Date.now().toString(36).toUpperCase()}-${crypto.randomBytes(2).toString('hex').toUpperCase()}`;
+      const userAgent = (req.headers['user-agent'] || '').slice(0, 500);
+      const isProduction = process.env.NODE_ENV === 'production';
+
+      // 4. Persistence handling
+      if (isPostgresRunning()) {
+        try {
+          await query(
+            `INSERT INTO customer_inquiries (
+               id, restaurant_id, branch_id, name, phone, order_id, message, status, ip_hash, user_agent, created_at, updated_at
+             )
+             VALUES ($1, $2, $3, $4, $5, $6, $7, 'new', $8, $9, NOW(), NOW())`,
+            [
+              inquiryId,
+              tenantContext.restaurantId,
+              tenantContext.branchId,
+              cleanName,
+              normalizedPhone,
+              normalizedOrderId,
+              cleanMessage,
+              ipHash,
+              userAgent,
+            ]
+          );
+        } catch (dbErr: any) {
+          console.error('[Contact API] PostgreSQL persistence error:', dbErr.message);
+          return res.status(503).json({
+            error: 'Failed to record customer inquiry in database. Please contact us directly by phone.',
+          });
+        }
+      } else {
+        // In-memory storage is permitted only in explicit local development / testing mode
+        if (isProduction) {
+          console.error('[Contact API] Inquiries cannot be accepted in production without an active database.');
+          return res.status(503).json({
+            error: 'Inquiry service temporarily unavailable. Production database connection required.',
+          });
+        }
+
+        if (!(inMemoryDb as any).customer_inquiries) {
+          (inMemoryDb as any).customer_inquiries = [];
+        }
+        (inMemoryDb as any).customer_inquiries.push({
+          id: inquiryId,
+          restaurant_id: tenantContext.restaurantId,
+          branch_id: tenantContext.branchId,
+          name: cleanName,
+          phone: normalizedPhone,
+          order_id: normalizedOrderId,
+          message: cleanMessage,
+          status: 'new',
+          ip_hash: ipHash,
+          user_agent: userAgent,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        });
+      }
+
+      // Safe logging: DO NOT log customer name, phone number, or message content
+      console.info(`[Contact API] Inquiry registered successfully: ${inquiryId} [restaurant=${tenantContext.restaurantId}] [ipHash=${ipHash}]`);
+
+      return res.status(201).json({
+        success: true,
+        inquiryId,
+        message: 'Your inquiry has been recorded successfully for the restaurant team to review in the staff portal.',
+      });
+    } catch (err: any) {
+      console.error('[Contact API] Unexpected error handling contact submission:', err.message);
+      return res.status(500).json({ error: 'Failed to process inquiry', details: err.message });
+    }
+  });
+
   return app;
+}
+
+// ==========================================================
+// DISTRIBUTED RATE LIMITER & SAFE PROXY IP HANDLING
+// ==========================================================
+export function normalizeClientIp(rawIp: string): string {
+  if (!rawIp) return '127.0.0.1';
+  let ip = rawIp.trim();
+  // Strip enclosing brackets if IPv6 is bracketed: [::1] or [::ffff:127.0.0.1]
+  if (ip.startsWith('[') && ip.endsWith(']')) {
+    ip = ip.slice(1, -1).trim();
+  }
+  // Only remove ::ffff: prefix from IPv4-mapped IPv6 addresses
+  if (ip.toLowerCase().startsWith('::ffff:')) {
+    return ip.slice(7);
+  }
+  return ip;
+}
+
+export function getSafeClientIp(req: express.Request): string {
+  const rawIp = req.ip || req.socket?.remoteAddress || '127.0.0.1';
+  return normalizeClientIp(rawIp);
+}
+
+export function hashIpForAudit(ip: string): string {
+  const secret = getIpHashSecret();
+  return crypto.createHmac('sha256', secret).update(ip).digest('hex').slice(0, 32);
+}
+
+export const memoryRateLimitStore = new Map<string, { count: number; resetAt: number }>();
+
+export function clearMemoryRateLimitStore(): void {
+  memoryRateLimitStore.clear();
+}
+
+export async function checkDistributedRateLimit(
+  key: string,
+  maxHits = 5,
+  windowMs = 15 * 60 * 1000
+): Promise<{ allowed: boolean; remaining: number; resetAt: number; isDurable: boolean }> {
+  const now = Date.now();
+  const resetTime = new Date(now + windowMs);
+
+  if (isPostgresRunning()) {
+    try {
+      const res = await query(
+        `INSERT INTO distributed_rate_limits (key, hit_count, reset_at, created_at, updated_at)
+         VALUES ($1, 1, $2, NOW(), NOW())
+         ON CONFLICT (key) DO UPDATE
+         SET
+           hit_count = CASE
+             WHEN distributed_rate_limits.reset_at <= NOW() THEN 1
+             ELSE distributed_rate_limits.hit_count + 1
+           END,
+           reset_at = CASE
+             WHEN distributed_rate_limits.reset_at <= NOW() THEN EXCLUDED.reset_at
+             ELSE distributed_rate_limits.reset_at
+           END,
+           updated_at = NOW()
+         RETURNING hit_count, reset_at`,
+        [key, resetTime]
+      );
+
+      const row = res.rows[0];
+      const hitCount = Number(row.hit_count);
+      const rowResetMs = new Date(row.reset_at).getTime();
+
+      if (hitCount > maxHits) {
+        return {
+          allowed: false,
+          remaining: 0,
+          resetAt: rowResetMs,
+          isDurable: true,
+        };
+      }
+
+      return {
+        allowed: true,
+        remaining: Math.max(0, maxHits - hitCount),
+        resetAt: rowResetMs,
+        isDurable: true,
+      };
+    } catch (dbErr: any) {
+      if (process.env.NODE_ENV === 'production') {
+        console.error('[RateLimiter] Distributed database rate limit check failed in production:', dbErr.message);
+        throw new Error('DISTRIBUTED_RATE_LIMITER_UNAVAILABLE');
+      }
+      console.warn('[RateLimiter] Distributed database rate limit check failed, using fallback in dev:', dbErr.message);
+    }
+  } else if (process.env.NODE_ENV === 'production') {
+    console.error('[RateLimiter] Production environment requires active PostgreSQL connection for distributed rate limits.');
+    throw new Error('DISTRIBUTED_RATE_LIMITER_UNAVAILABLE');
+  }
+
+  // In-memory fallback (local development / testing mode only)
+  const mem = memoryRateLimitStore.get(key);
+  if (mem && now < mem.resetAt) {
+    mem.count += 1;
+    if (mem.count > maxHits) {
+      return { allowed: false, remaining: 0, resetAt: mem.resetAt, isDurable: false };
+    }
+    return {
+      allowed: true,
+      remaining: maxHits - mem.count,
+      resetAt: mem.resetAt,
+      isDurable: false,
+    };
+  } else {
+    const newReset = now + windowMs;
+    memoryRateLimitStore.set(key, { count: 1, resetAt: newReset });
+    return {
+      allowed: true,
+      remaining: maxHits - 1,
+      resetAt: newReset,
+      isDurable: false,
+    };
+  }
+}
+
+export async function resolveTrustedTenantForInquiry(
+  orderId?: string | null,
+  clientRestaurantId?: string | null,
+  clientBranchId?: string | null
+): Promise<{ restaurantId: string; branchId: string }> {
+  const DEFAULT_RESTAURANT = 'a0000000-0000-0000-0000-000000000001';
+  const DEFAULT_BRANCH = 'b0000000-0000-0000-0000-000000000001';
+
+  // 1. If customer provided an order ID, verify and link to the exact order's tenant
+  if (orderId) {
+    if (isPostgresRunning()) {
+      try {
+        const orderRes = await query(
+          `SELECT restaurant_id, branch_id FROM orders WHERE order_number = $1 OR id::text = $1 LIMIT 1`,
+          [orderId]
+        );
+        if (orderRes.rows.length > 0) {
+          return {
+            restaurantId: orderRes.rows[0].restaurant_id,
+            branchId: orderRes.rows[0].branch_id || DEFAULT_BRANCH,
+          };
+        }
+      } catch (err: any) {
+        console.warn('[Contact API] Order tenant lookup error:', err.message);
+      }
+    } else {
+      const order = inMemoryDb.orders.find(
+        (o) => (o as any).order_number === orderId || o.id === orderId || (o as any).orderNumber === orderId
+      );
+      if (order) {
+        return {
+          restaurantId: (order as any).restaurant_id || (order as any).restaurantId || DEFAULT_RESTAURANT,
+          branchId: (order as any).branch_id || (order as any).branchId || DEFAULT_BRANCH,
+        };
+      }
+    }
+  }
+
+  // 2. If client supplied a restaurantId, verify it exists as an active tenant in the database
+  if (clientRestaurantId) {
+    if (isPostgresRunning()) {
+      try {
+        const restRes = await query(
+          `SELECT id FROM restaurants WHERE id = $1 AND status = 'active' LIMIT 1`,
+          [clientRestaurantId]
+        );
+        if (restRes.rows.length > 0) {
+          return {
+            restaurantId: restRes.rows[0].id,
+            branchId: clientBranchId || DEFAULT_BRANCH,
+          };
+        }
+      } catch {
+        // Fall through to default if invalid UUID or not found
+      }
+    } else {
+      const rest = inMemoryDb.restaurants.find(
+        (r) => r.id === clientRestaurantId && r.status === 'active'
+      );
+      if (rest) {
+        return {
+          restaurantId: rest.id,
+          branchId: clientBranchId || DEFAULT_BRANCH,
+        };
+      }
+    }
+  }
+
+  // 3. Trusted default tenant for Starters4U flagship
+  return {
+    restaurantId: DEFAULT_RESTAURANT,
+    branchId: DEFAULT_BRANCH,
+  };
 }
 
 export const app = createApp();
