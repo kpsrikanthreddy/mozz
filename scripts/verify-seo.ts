@@ -368,12 +368,12 @@ async function verifySeoBuild() {
   }
 
   console.log('\n----------------------------------------');
-  console.log(`Results: ${testsPassed} passed, ${testsFailed} failed.`);
-
   if (testsFailed > 0) {
-    console.error('❌ [SEO Automated Verification Suite] Build failed due to SEO errors.');
+    console.error(`Results: ${testsPassed} passed, ${testsFailed} issues detected.`);
+    console.error('❌ [SEO Automated Verification Suite] Verification halted due to issues.');
     process.exit(1);
   } else {
+    console.log(`Results: All ${testsPassed} checks passed.`);
     console.log('🎉 [SEO Automated Verification Suite] All checks successfully passed!');
   }
 }

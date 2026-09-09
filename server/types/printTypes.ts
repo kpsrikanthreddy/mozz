@@ -70,9 +70,10 @@ export interface PrintDevice {
   id: string;
   restaurantId: string;
   branchId: string;
+  branchName?: string;
   deviceId: string;
   deviceName: string;
-  tokenHash: string;
+  tokenHash?: string;
   platform: string;
   appVersion: string;
   isActive: boolean;

@@ -12,6 +12,8 @@ export interface CustomerRecord {
   address?: string;
   landmark?: string;
   notes?: string;
+  latitude?: number;
+  longitude?: number;
   created_at: string;
   updated_at: string;
 }
@@ -26,24 +28,28 @@ export async function findOrCreateCustomer(
   const address = details.address?.trim() || null;
   const landmark = details.landmark?.trim() || null;
   const notes = details.notes?.trim() || null;
+  const latitude = typeof details.latitude === 'number' && !isNaN(details.latitude) ? details.latitude : null;
+  const longitude = typeof details.longitude === 'number' && !isNaN(details.longitude) ? details.longitude : null;
 
   if (isPostgresRunning()) {
     try {
       // Upsert using PostgreSQL ON CONFLICT (restaurant_id, phone)
       const upsertSql = `
-        INSERT INTO customers (restaurant_id, name, phone, email, address, landmark, notes, created_at, updated_at)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW())
+        INSERT INTO customers (restaurant_id, name, phone, email, address, landmark, notes, latitude, longitude, created_at, updated_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), NOW())
         ON CONFLICT (restaurant_id, phone) DO UPDATE SET
           name = CASE WHEN EXCLUDED.name <> 'Guest' THEN EXCLUDED.name ELSE customers.name END,
           email = COALESCE(EXCLUDED.email, customers.email),
           address = COALESCE(EXCLUDED.address, customers.address),
           landmark = COALESCE(EXCLUDED.landmark, customers.landmark),
           notes = COALESCE(EXCLUDED.notes, customers.notes),
+          latitude = COALESCE(EXCLUDED.latitude, customers.latitude),
+          longitude = COALESCE(EXCLUDED.longitude, customers.longitude),
           updated_at = NOW()
         RETURNING *;
       `;
 
-      const res = await query(upsertSql, [restaurantId, name, sanitizedPhone, email, address, landmark, notes]);
+      const res = await query(upsertSql, [restaurantId, name, sanitizedPhone, email, address, landmark, notes, latitude, longitude]);
       if (res.rows.length > 0) {
         return res.rows[0];
       }
@@ -63,6 +69,8 @@ export async function findOrCreateCustomer(
     if (address) found.address = address;
     if (landmark) found.landmark = landmark;
     if (notes) found.notes = notes;
+    if (latitude !== null) found.latitude = latitude;
+    if (longitude !== null) found.longitude = longitude;
     found.updated_at = new Date().toISOString();
     return found;
   }
@@ -76,6 +84,8 @@ export async function findOrCreateCustomer(
     address: address || undefined,
     landmark: landmark || undefined,
     notes: notes || undefined,
+    latitude: latitude !== null ? latitude : undefined,
+    longitude: longitude !== null ? longitude : undefined,
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
   };

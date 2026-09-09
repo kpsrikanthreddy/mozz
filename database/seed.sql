@@ -32,11 +32,11 @@ INSERT INTO restaurant_branches (id, restaurant_id, name, slug, address, latitud
 VALUES (
     'b0000000-0000-0000-0000-000000000001',
     'a0000000-0000-0000-0000-000000000001',
-    'Main Branch - Flagship Outlet',
+    'MOZZ Chinese & Pizzateria - Gachibowli',
     'main-outlet',
-    'Madhapur Main Road, Near Metro Pillar 17, Hitec City, Hyderabad, Telangana 500081',
-    17.4482940,
-    78.3914850,
+    'Plot no 31, Vinayak Nagar, Indira Nagar, Gachibowli, Hyderabad, Telangana',
+    17.4425090,
+    78.3539660,
     12.00,
     '+918179620607',
     TRUE

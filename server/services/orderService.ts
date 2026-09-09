@@ -53,21 +53,23 @@ export async function assembleOrderObject(
   historyRows: any[] = [],
   customerRow?: any
 ): Promise<Order> {
-  const customer: CustomerDetails = customerRow
-    ? {
-        name: customerRow.name || 'Guest',
-        phone: customerRow.phone || '',
-        email: customerRow.email || undefined,
-        address: customerRow.address || undefined,
-        landmark: customerRow.landmark || undefined,
-        tableNumber: orderRow.table_number || undefined,
-        notes: customerRow.notes || undefined,
-      }
-    : orderRow.customer_snapshot || {
-        name: 'Guest',
-        phone: '',
-        tableNumber: orderRow.table_number || undefined,
-      };
+  const rawCust = customerRow || orderRow.customer_snapshot || {};
+  const latRaw = orderRow.customer_latitude ?? orderRow.customer_snapshot?.latitude ?? customerRow?.latitude ?? customerRow?.cust_latitude;
+  const lngRaw = orderRow.customer_longitude ?? orderRow.customer_snapshot?.longitude ?? customerRow?.longitude ?? customerRow?.cust_longitude;
+  const lat = latRaw !== undefined && latRaw !== null && !isNaN(Number(latRaw)) ? Number(latRaw) : undefined;
+  const lng = lngRaw !== undefined && lngRaw !== null && !isNaN(Number(lngRaw)) ? Number(lngRaw) : undefined;
+
+  const customer: CustomerDetails = {
+    name: customerRow?.name || customerRow?.cust_name || orderRow.customer_snapshot?.name || 'Guest',
+    phone: customerRow?.phone || customerRow?.cust_phone || orderRow.customer_snapshot?.phone || '',
+    email: customerRow?.email || customerRow?.cust_email || orderRow.customer_snapshot?.email || undefined,
+    address: customerRow?.address || customerRow?.cust_address || orderRow.customer_snapshot?.address || undefined,
+    landmark: customerRow?.landmark || customerRow?.cust_landmark || orderRow.customer_snapshot?.landmark || undefined,
+    tableNumber: orderRow.table_number || orderRow.customer_snapshot?.tableNumber || undefined,
+    notes: customerRow?.notes || orderRow.customer_snapshot?.notes || undefined,
+    latitude: lat,
+    longitude: lng,
+  };
 
   const items: CartItem[] = itemsRows.map((it) => ({
     cartItemId: it.id || `ci-${Math.random().toString(36).slice(2, 7)}`,
@@ -234,6 +236,9 @@ export async function createOrder(payload: CreateOrderPayload): Promise<Order> {
     try {
       await pgClient.query('BEGIN');
 
+      const customerLat = typeof payload.customer?.latitude === 'number' && !isNaN(payload.customer.latitude) ? payload.customer.latitude : (customerRecord.latitude ?? null);
+      const customerLng = typeof payload.customer?.longitude === 'number' && !isNaN(payload.customer.longitude) ? payload.customer.longitude : (customerRecord.longitude ?? null);
+
       // Insert Order with UUID primary key and unique human-readable order_number
       const insertOrderSql = `
         INSERT INTO orders (
@@ -242,14 +247,14 @@ export async function createOrder(payload: CreateOrderPayload): Promise<Order> {
           payment_method, payment_status, payment_id,
           item_total, tax, delivery_fee, discount, coupon_code, grand_total,
           estimated_delivery_time_minutes, kot_number, kot_station, waiter_name,
-          customer_snapshot, created_at, updated_at
+          customer_snapshot, customer_latitude, customer_longitude, created_at, updated_at
         ) VALUES (
           $1, $2, $3, $4, $5,
           $6, $7, $8, $9,
           $10, $11, $12,
           $13, $14, $15, $16, $17, $18,
           $19, $20, $21, $22,
-          $23, NOW(), NOW()
+          $23, $24, $25, NOW(), NOW()
         ) RETURNING *;
       `;
 
@@ -283,7 +288,11 @@ export async function createOrder(payload: CreateOrderPayload): Promise<Order> {
           address: customerRecord.address,
           landmark: customerRecord.landmark,
           tableNumber: payload.tableNumber,
+          latitude: customerLat,
+          longitude: customerLng,
         }),
+        customerLat,
+        customerLng,
       ];
 
       const orderResult = await pgClient.query(insertOrderSql, orderValues);
@@ -429,6 +438,8 @@ export async function createOrder(payload: CreateOrderPayload): Promise<Order> {
     waiter_name: payload.orderType === 'dine_in' ? 'Ramesh (Captain)' : null,
     kot_print_count: 0,
     receipt_print_count: 0,
+    customer_latitude: customerRecord.latitude ?? (typeof payload.customer?.latitude === 'number' ? payload.customer.latitude : null),
+    customer_longitude: customerRecord.longitude ?? (typeof payload.customer?.longitude === 'number' ? payload.customer.longitude : null),
     customer_snapshot: {
       name: customerRecord.name,
       phone: customerRecord.phone,
@@ -436,6 +447,8 @@ export async function createOrder(payload: CreateOrderPayload): Promise<Order> {
       address: customerRecord.address,
       landmark: customerRecord.landmark,
       tableNumber: payload.tableNumber,
+      latitude: customerRecord.latitude ?? (typeof payload.customer?.latitude === 'number' ? payload.customer.latitude : undefined),
+      longitude: customerRecord.longitude ?? (typeof payload.customer?.longitude === 'number' ? payload.customer.longitude : undefined),
     },
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
@@ -593,7 +606,7 @@ export async function getOrderById(orderIdentifier: string, restaurantId: string
     try {
       // Query by UUID id OR human-readable order_number
       const orderRes = await query(
-        `SELECT o.*, c.name as cust_name, c.phone as cust_phone, c.email as cust_email, c.address as cust_address, c.landmark as cust_landmark
+        `SELECT o.*, c.name as cust_name, c.phone as cust_phone, c.email as cust_email, c.address as cust_address, c.landmark as cust_landmark, c.latitude as cust_latitude, c.longitude as cust_longitude
          FROM orders o
          LEFT JOIN customers c ON o.customer_id = c.id
          WHERE (o.id::text = $1 OR o.order_number = $1) AND o.restaurant_id = $2
@@ -617,6 +630,8 @@ export async function getOrderById(orderIdentifier: string, restaurantId: string
         email: row.cust_email,
         address: row.cust_address,
         landmark: row.cust_landmark,
+        latitude: row.cust_latitude ?? row.customer_latitude,
+        longitude: row.cust_longitude ?? row.customer_longitude,
       } : undefined;
 
       return assembleOrderObject(row, itemRows, histRows, custObj);
@@ -634,6 +649,79 @@ export async function getOrderById(orderIdentifier: string, restaurantId: string
   const history = inMemoryDb.order_status_history.filter((h) => h.order_id === row.id);
   const cust = inMemoryDb.customers.find((c) => c.id === row.customer_id);
   return assembleOrderObject(row, items, history, cust);
+}
+
+export async function updateOrderCustomerLocation(
+  orderIdentifier: string,
+  location: { latitude: number; longitude: number; address?: string },
+  restaurantId: string = DEFAULT_RESTAURANT_ID
+): Promise<Order | null> {
+  const lat = Number(location.latitude);
+  const lng = Number(location.longitude);
+
+  if (isNaN(lat) || isNaN(lng)) {
+    throw new Error('Valid numerical latitude and longitude are required');
+  }
+
+  if (isPostgresRunning()) {
+    try {
+      const updateSql = `
+        UPDATE orders
+        SET
+          customer_latitude = $1,
+          customer_longitude = $2,
+          customer_snapshot = COALESCE(customer_snapshot, '{}'::jsonb) || jsonb_build_object(
+            'latitude', $1::numeric,
+            'longitude', $2::numeric,
+            'address', COALESCE($3, customer_snapshot->>'address')
+          ),
+          updated_at = NOW()
+        WHERE (id::text = $4 OR order_number = $4) AND restaurant_id = $5
+        RETURNING id, customer_id;
+      `;
+      const res = await query(updateSql, [lat, lng, location.address || null, orderIdentifier, restaurantId]);
+      if (res.rows.length > 0) {
+        const row = res.rows[0];
+        if (row.customer_id) {
+          await query(
+            `UPDATE customers SET latitude = $1, longitude = $2, address = COALESCE($3, address), updated_at = NOW() WHERE id = $4`,
+            [lat, lng, location.address || null, row.customer_id]
+          );
+        }
+        return await getOrderById(row.id, restaurantId);
+      }
+    } catch (err) {
+      console.error('[OrderService] Error in updateOrderCustomerLocation PG:', err);
+    }
+  }
+
+  // In-memory fallback
+  const ord = inMemoryDb.orders.find(
+    (o) => (o.id === orderIdentifier || o.order_number === orderIdentifier) && o.restaurant_id === restaurantId
+  );
+  if (ord) {
+    ord.customer_latitude = lat;
+    ord.customer_longitude = lng;
+    ord.customer_snapshot = {
+      ...(ord.customer_snapshot || {}),
+      latitude: lat,
+      longitude: lng,
+      address: location.address || ord.customer_snapshot?.address,
+    };
+    ord.updated_at = new Date().toISOString();
+    if (ord.customer_id) {
+      const cust = inMemoryDb.customers.find((c) => c.id === ord.customer_id);
+      if (cust) {
+        cust.latitude = lat;
+        cust.longitude = lng;
+        if (location.address) cust.address = location.address;
+        cust.updated_at = new Date().toISOString();
+      }
+    }
+    return await getOrderById(ord.id, restaurantId);
+  }
+
+  return null;
 }
 
 export async function updateOrderStatus(

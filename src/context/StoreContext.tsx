@@ -50,6 +50,7 @@ interface StoreContextType {
   // Order actions
   createOrder: (paymentMethod: PaymentMethod, paymentId?: string) => Promise<Order>;
   updateOrderStatus: (orderId: string, newStatus: OrderStatus, note?: string) => Promise<void>;
+  updateOrderDeliveryLocation: (orderId: string, location: { latitude: number; longitude: number; address?: string }) => Promise<Order | null>;
   setActiveOrderId: (orderId: string | null) => void;
   fetchOrderById: (orderId: string) => Promise<Order | null>;
   cancelOrder: (orderId: string, reason?: string) => Promise<void>;
@@ -151,8 +152,20 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     } catch {}
 
     try {
-      const savedOrder = localStorage.getItem(LOCAL_STORAGE_KEY_ACTIVE_ORDER);
-      if (savedOrder) setActiveOrderId(savedOrder);
+      if (typeof window !== 'undefined') {
+        const params = new URLSearchParams(window.location.search);
+        const qOrderId = params.get('orderId') || params.get('order_id');
+        if (qOrderId) {
+          setActiveOrderId(qOrderId);
+          fetchOrderById(qOrderId);
+        } else {
+          const savedOrder = localStorage.getItem(LOCAL_STORAGE_KEY_ACTIVE_ORDER);
+          if (savedOrder) {
+            setActiveOrderId(savedOrder);
+            fetchOrderById(savedOrder);
+          }
+        }
+      }
     } catch {}
 
     try {
@@ -589,6 +602,30 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     return null;
   }, []);
 
+  const updateOrderDeliveryLocation = useCallback(
+    async (
+      orderId: string,
+      location: { latitude: number; longitude: number; address?: string }
+    ): Promise<Order | null> => {
+      try {
+        const res = await fetch(`/api/orders/${encodeURIComponent(orderId)}/location`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(location),
+        });
+        if (res.ok) {
+          const updated: Order = await res.json();
+          setOrders((prev) => prev.map((o) => (o.id === updated.id ? updated : o)));
+          return updated;
+        }
+      } catch (err) {
+        console.error('[StoreContext] Error updating delivery location in DB:', err);
+      }
+      return null;
+    },
+    []
+  );
+
   const deleteOrder = async (orderId: string) => {
     try {
       await fetch(`/api/orders/${encodeURIComponent(orderId)}`, { method: 'DELETE' });
@@ -814,6 +851,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         removeCoupon,
         createOrder,
         updateOrderStatus,
+        updateOrderDeliveryLocation,
         setActiveOrderId,
         fetchOrderById,
         cancelOrder,

@@ -22,8 +22,9 @@ export interface BusinessInfo {
   priceRange: string;
   servesCuisine: string[];
 
-  // Information requiring owner confirmation before populating
+  // Verified Restaurant Entity Details
   streetAddress?: string;
+  fullAddress?: string;
   postalCode?: string;
   telephone?: string;
   email?: string;
@@ -32,6 +33,7 @@ export interface BusinessInfo {
     longitude: number;
   };
   googleMapsUrl?: string;
+  googlePlaceId?: string;
   openingHours?: Array<{
     days: string[];
     opens: string;
@@ -65,27 +67,35 @@ export const BUSINESS_INFO: BusinessInfo = {
     'Noodles',
   ],
 
-  // Intentionally left undefined until explicitly confirmed by the business owner
-  streetAddress: undefined,
+  // Verified details from business owner
+  streetAddress: 'Plot no 31, Vinayak Nagar, Indira Nagar, Gachibowli',
+  fullAddress: 'Plot no 31, Vinayak Nagar, Indira Nagar, Gachibowli, Hyderabad, Telangana',
   postalCode: undefined,
   telephone: undefined,
   email: undefined,
-  geo: undefined,
-  googleMapsUrl: undefined,
+  geo: {
+    latitude: 17.442509,
+    longitude: 78.353966,
+  },
+  googleMapsUrl: 'https://maps.app.goo.gl/H9R6Fma2rBVmt3uN9',
+  googlePlaceId: 'ChIJQ_8-QkKTyzsRcb3W1I0llIM',
   openingHours: undefined,
   socialProfiles: [],
   gstin: undefined,
 };
 
 /**
- * Returns a clean locality-level address string using only confirmed values
+ * Returns a clean verified address string using confirmed values
  */
 export function getFormattedLocation(): string {
+  if (BUSINESS_INFO.streetAddress) {
+    return `${BUSINESS_INFO.streetAddress}, ${BUSINESS_INFO.city}, ${BUSINESS_INFO.state}`;
+  }
   return `${BUSINESS_INFO.locality}, ${BUSINESS_INFO.city}, ${BUSINESS_INFO.state}, ${BUSINESS_INFO.country}`;
 }
 
 /**
- * Builds Schema.org Restaurant structured data omitting all unverified fields
+ * Builds Schema.org Restaurant structured data using verified fields
  */
 export function getRestaurantSchema(): Record<string, any> {
   const schema: Record<string, any> = {
@@ -98,14 +108,25 @@ export function getRestaurantSchema(): Record<string, any> {
     priceRange: BUSINESS_INFO.priceRange,
     address: {
       '@type': 'PostalAddress',
+      streetAddress: BUSINESS_INFO.streetAddress,
       addressLocality: BUSINESS_INFO.locality,
       addressRegion: BUSINESS_INFO.state,
       addressCountry: BUSINESS_INFO.countryCode,
     },
   };
 
-  if (BUSINESS_INFO.streetAddress) {
-    schema.address.streetAddress = BUSINESS_INFO.streetAddress;
+  if (BUSINESS_INFO.geo) {
+    schema.geo = {
+      '@type': 'GeoCoordinates',
+      latitude: BUSINESS_INFO.geo.latitude,
+      longitude: BUSINESS_INFO.geo.longitude,
+    };
+  }
+  if (BUSINESS_INFO.googleMapsUrl) {
+    schema.hasMap = BUSINESS_INFO.googleMapsUrl;
+  }
+  if (BUSINESS_INFO.googlePlaceId) {
+    schema.identifier = BUSINESS_INFO.googlePlaceId;
   }
   if (BUSINESS_INFO.postalCode) {
     schema.address.postalCode = BUSINESS_INFO.postalCode;
@@ -115,13 +136,6 @@ export function getRestaurantSchema(): Record<string, any> {
   }
   if (BUSINESS_INFO.email) {
     schema.email = BUSINESS_INFO.email;
-  }
-  if (BUSINESS_INFO.geo) {
-    schema.geo = {
-      '@type': 'GeoCoordinates',
-      latitude: BUSINESS_INFO.geo.latitude,
-      longitude: BUSINESS_INFO.geo.longitude,
-    };
   }
   if (BUSINESS_INFO.socialProfiles && BUSINESS_INFO.socialProfiles.length > 0) {
     schema.sameAs = BUSINESS_INFO.socialProfiles;

@@ -1196,8 +1196,24 @@ export async function createPairingCode(
   const expiresAt = new Date(Date.now() + ttlMinutes * 60 * 1000).toISOString();
   const codeId = crypto.randomUUID();
 
+  const isValidUuid = (val: string | null | undefined): boolean => {
+    return typeof val === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val);
+  };
+  const pgUserId = isValidUuid(userId) ? userId : null;
+
   if (isPostgresRunning()) {
     try {
+      // Invalidate any previous unused codes for this restaurant, branch, and admin user
+      const invalidateSql = `
+        UPDATE device_pairing_codes
+        SET is_used = TRUE
+        WHERE restaurant_id = $1
+          AND branch_id = $2
+          AND is_used = FALSE
+          AND (created_by_user_id = $3 OR $3 IS NULL);
+      `;
+      await query(invalidateSql, [restaurantId, branchId, pgUserId]);
+
       const sql = `
         INSERT INTO device_pairing_codes (
           id, code, restaurant_id, branch_id, created_by_user_id,
@@ -1207,13 +1223,25 @@ export async function createPairingCode(
           $6, FALSE, NOW()
         ) RETURNING id;
       `;
-      await query(sql, [codeId, pairingCode, restaurantId, branchId, userId, expiresAt]);
+      await query(sql, [codeId, pairingCode, restaurantId, branchId, pgUserId, expiresAt]);
     } catch (err) {
       console.error('[PrintService] Error saving pairing code in PG:', err);
     }
   }
 
-  // Also maintain in-memory fallback
+  // Also maintain in-memory fallback: invalidate previous unused codes
+  for (const c of inMemoryDb.device_pairing_codes) {
+    if (
+      c.restaurant_id === restaurantId &&
+      c.branch_id === branchId &&
+      !c.is_used &&
+      (!userId || c.created_by_user_id === userId)
+    ) {
+      c.is_used = true;
+      (c as any).used_at = new Date().toISOString();
+    }
+  }
+
   inMemoryDb.device_pairing_codes.push({
     id: codeId,
     code: pairingCode,
@@ -1395,10 +1423,12 @@ export async function getTenantDevices(restaurantId: string, branchId?: string):
   if (isPostgresRunning()) {
     try {
       const sql = `
-        SELECT * FROM print_devices
-        WHERE restaurant_id = $1
-          ${branchId ? 'AND branch_id = $2' : ''}
-        ORDER BY created_at DESC;
+        SELECT d.*, b.name as branch_name
+        FROM print_devices d
+        LEFT JOIN restaurant_branches b ON d.branch_id = b.id
+        WHERE d.restaurant_id = $1
+          ${branchId ? 'AND d.branch_id = $2' : ''}
+        ORDER BY d.created_at DESC;
       `;
       const params = branchId ? [restaurantId, branchId] : [restaurantId];
       const res = await query(sql, params);
@@ -1406,9 +1436,9 @@ export async function getTenantDevices(restaurantId: string, branchId?: string):
         id: row.id,
         restaurantId: row.restaurant_id,
         branchId: row.branch_id,
+        branchName: row.branch_name,
         deviceId: row.device_id,
         deviceName: row.device_name,
-        tokenHash: row.token_hash,
         platform: row.platform,
         appVersion: row.app_version,
         isActive: row.is_active,
@@ -1421,9 +1451,18 @@ export async function getTenantDevices(restaurantId: string, branchId?: string):
     }
   }
 
-  return inMemoryDb.print_devices.filter((d) => {
-    if (d.restaurantId !== restaurantId) return false;
-    if (branchId && d.branchId !== branchId) return false;
-    return true;
-  });
+  return inMemoryDb.print_devices
+    .filter((d) => {
+      if (d.restaurantId !== restaurantId) return false;
+      if (branchId && d.branchId !== branchId) return false;
+      return true;
+    })
+    .map((d) => {
+      const branch = inMemoryDb.restaurant_branches.find((b) => b.id === d.branchId);
+      const { tokenHash, ...safe } = d;
+      return {
+        ...safe,
+        branchName: branch?.name || 'Main Branch',
+      };
+    });
 }

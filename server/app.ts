@@ -592,30 +592,48 @@ export function createApp(): express.Application {
 
   // 2.1. Generate 6-digit registration/pairing code for quick physical desktop POS onboarding
   // Authenticated: requires store manager or owner
-  app.post('/api/admin/print-devices/pairing-code', requireAuth, async (req, res) => {
-    try {
-      const restaurantId = req.user!.restaurantId;
-      const branchId = req.body.branchId || req.user!.branchId || 'b0000000-0000-0000-0000-000000000001';
+  app.post(
+    '/api/admin/print-devices/pairing-code',
+    requireAuth,
+    requireRole(['SUPER_ADMIN', 'RESTAURANT_OWNER', 'BRANCH_MANAGER', 'MANAGER']),
+    async (req, res) => {
+      try {
+        const restaurantId = req.user!.restaurantId;
+        let branchId = req.body.branchId || req.user!.branchId;
 
-      const pairing = await printService.createPairingCode({
-        restaurantId,
-        branchId,
-        userId: req.user!.userId,
-      });
+        // Verify selected branch belongs to logged-in restaurant for strict tenant isolation
+        const branches = await adminService.getTenantBranches(restaurantId);
+        if (branchId) {
+          const branchExists = branches.some((b: any) => b.id === branchId);
+          if (!branchExists) {
+            return res.status(403).json({ error: 'Selected branch does not belong to your restaurant' });
+          }
+        } else if (branches.length > 0) {
+          branchId = branches[0].id;
+        } else {
+          branchId = 'b0000000-0000-0000-0000-000000000001';
+        }
 
-      res.status(201).json({
-        success: true,
-        pairingCode: pairing.pairingCode,
-        expiresAt: pairing.expiresAt,
-        expiresInSeconds: 600, // 10 minutes
-        restaurantId: pairing.restaurantId,
-        branchId: pairing.branchId,
-      });
-    } catch (err: any) {
-      console.error('[PrintAgent API] Generate pairing code error:', err);
-      res.status(500).json({ error: 'Failed to generate pairing code', details: err.message });
+        const pairing = await printService.createPairingCode({
+          restaurantId,
+          branchId,
+          userId: req.user!.userId,
+        });
+
+        res.status(201).json({
+          success: true,
+          pairingCode: pairing.pairingCode,
+          expiresAt: pairing.expiresAt,
+          expiresInSeconds: 600, // 10 minutes
+          restaurantId: pairing.restaurantId,
+          branchId: pairing.branchId,
+        });
+      } catch (err: any) {
+        console.error('[PrintAgent API] Generate pairing code error:', err);
+        res.status(500).json({ error: 'Failed to generate pairing code', details: err.message });
+      }
     }
-  });
+  );
 
   // 2.2. Exchange 6-digit code for device credentials (Called by Mozz Windows Print Agent)
   // Rate limited: max 5 failed attempts per IP per 5 minutes to prevent brute-forcing
@@ -653,8 +671,8 @@ export function createApp(): express.Application {
     }
   });
 
-  // 2.3. Deactivate device (Revokes hardware authorization and terminates active streams)
-  app.post('/api/admin/print-devices/:id/deactivate', requireAuth, async (req, res) => {
+  // 2.3. Deactivate / Revoke device (Revokes hardware authorization and terminates active streams)
+  const handleDeactivateDevice = async (req: express.Request, res: express.Response) => {
     try {
       const restaurantId = req.user!.restaurantId;
       const result = await printService.deactivateDevice(req.params.id, restaurantId);
@@ -666,20 +684,54 @@ export function createApp(): express.Application {
       console.error('[PrintAgent API] Deactivate device error:', err);
       res.status(500).json({ error: 'Failed to deactivate device', details: err.message });
     }
-  });
+  };
+
+  app.post(
+    '/api/admin/print-devices/:id/deactivate',
+    requireAuth,
+    requireRole(['SUPER_ADMIN', 'RESTAURANT_OWNER', 'BRANCH_MANAGER', 'MANAGER']),
+    handleDeactivateDevice
+  );
+  app.post(
+    '/api/admin/print-devices/:id/revoke',
+    requireAuth,
+    requireRole(['SUPER_ADMIN', 'RESTAURANT_OWNER', 'BRANCH_MANAGER', 'MANAGER']),
+    handleDeactivateDevice
+  );
+  app.delete(
+    '/api/admin/print-devices/:id',
+    requireAuth,
+    requireRole(['SUPER_ADMIN', 'RESTAURANT_OWNER', 'BRANCH_MANAGER', 'MANAGER']),
+    handleDeactivateDevice
+  );
 
   // 2.4. List all print devices for restaurant
-  app.get('/api/admin/print-devices', requireAuth, async (req, res) => {
-    try {
-      const restaurantId = req.user!.restaurantId;
-      const branchId = req.query.branchId as string | undefined;
-      const devices = await printService.getTenantDevices(restaurantId, branchId);
-      res.json(devices);
-    } catch (err: any) {
-      console.error('[PrintAgent API] List devices error:', err);
-      res.status(500).json({ error: 'Failed to list print devices', details: err.message });
+  app.get(
+    '/api/admin/print-devices',
+    requireAuth,
+    requireRole(['SUPER_ADMIN', 'RESTAURANT_OWNER', 'BRANCH_MANAGER', 'MANAGER']),
+    async (req, res) => {
+      try {
+        const restaurantId = req.user!.restaurantId;
+        const branchId = req.query.branchId as string | undefined;
+
+        // If filtering by branch, ensure branch belongs to this tenant
+        if (branchId) {
+          const branches = await adminService.getTenantBranches(restaurantId);
+          const branchExists = branches.some((b: any) => b.id === branchId);
+          if (!branchExists) {
+            return res.status(403).json({ error: 'Branch does not belong to your restaurant' });
+          }
+        }
+
+        const devices = await printService.getTenantDevices(restaurantId, branchId);
+        res.json(devices);
+      } catch (err: any) {
+        console.error('[PrintAgent API] List devices error:', err);
+        res.status(500).json({ error: 'Failed to list print devices', details: err.message });
+      }
     }
-  });
+  );
 
   // 3. Device Heartbeat
   app.post('/api/print-agent/devices/heartbeat', requireDeviceAuth, async (req, res) => {
@@ -951,6 +1003,28 @@ export function createApp(): express.Application {
       res.json(order);
     } catch (err: any) {
       res.status(500).json({ error: 'Failed to fetch order', details: err.message });
+    }
+  });
+
+  app.patch('/api/orders/:id/location', async (req, res) => {
+    try {
+      const { latitude, longitude, address } = req.body;
+      const lat = Number(latitude);
+      const lng = Number(longitude);
+      if (isNaN(lat) || isNaN(lng)) {
+        return res.status(400).json({ error: 'Valid numerical latitude and longitude are required' });
+      }
+      const updated = await orderService.updateOrderCustomerLocation(req.params.id, {
+        latitude: lat,
+        longitude: lng,
+        address: typeof address === 'string' ? address.trim() : undefined,
+      });
+      if (!updated) {
+        return res.status(404).json({ error: 'Order not found' });
+      }
+      res.json(updated);
+    } catch (err: any) {
+      res.status(500).json({ error: 'Failed to update delivery location', details: err.message });
     }
   });
 

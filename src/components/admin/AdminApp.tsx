@@ -3,6 +3,7 @@ import { useAdminAuth } from '../../context/AdminAuthContext';
 import { AdminLogin } from './AdminLogin';
 import { AdminNavbar } from './AdminNavbar';
 import { AdminPortal } from '../AdminPortal';
+import { PrintDevicesSection } from './PrintDevicesSection';
 import {
   Layers,
   Users,
@@ -26,8 +27,23 @@ export const AdminApp: React.FC = () => {
 
   // Admin active sub-view state
   const [activeSection, setActiveSection] = useState<
-    'portal' | 'crm' | 'payments' | 'staff' | 'settings' | 'subscription'
-  >('portal');
+    'portal' | 'crm' | 'payments' | 'staff' | 'print-devices' | 'settings' | 'subscription'
+  >(() => {
+    if (typeof window !== 'undefined') {
+      const p = new URLSearchParams(window.location.search);
+      const tab = p.get('section') || p.get('tab');
+      if (tab === 'print-devices' || tab === 'pos' || tab === 'printers' || tab === 'print') {
+        return 'print-devices';
+      }
+      if (tab === 'crm' || tab === 'payments' || tab === 'staff' || tab === 'settings') {
+        return tab;
+      }
+      if (window.location.pathname.includes('/print-devices')) {
+        return 'print-devices';
+      }
+    }
+    return 'portal';
+  });
 
   // Customer CRM data from backend
   const [customers, setCustomers] = useState<any[]>([]);
@@ -137,6 +153,26 @@ export const AdminApp: React.FC = () => {
             >
               <ShieldCheck className="w-3.5 h-3.5" />
               <span>Staff & Roles</span>
+            </button>
+
+            <button
+              id="admin-tab-print-devices"
+              onClick={() => {
+                setActiveSection('print-devices');
+                if (typeof window !== 'undefined') {
+                  const url = new URL(window.location.href);
+                  url.searchParams.set('tab', 'print-devices');
+                  window.history.replaceState({}, '', url.toString());
+                }
+              }}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 whitespace-nowrap ${
+                activeSection === 'print-devices'
+                  ? 'bg-rose-600 text-white shadow-xs'
+                  : 'hover:bg-slate-800 text-slate-300'
+              }`}
+            >
+              <Printer className="w-3.5 h-3.5" />
+              <span>Print Devices & POS</span>
             </button>
 
             <button
@@ -351,6 +387,9 @@ export const AdminApp: React.FC = () => {
             </div>
           </div>
         )}
+
+        {/* Print Devices & POS Pairing Module */}
+        {activeSection === 'print-devices' && <PrintDevicesSection />}
 
         {/* Store Settings Module */}
         {activeSection === 'settings' && (

@@ -1,7 +1,7 @@
 {
   "name": "MOZZ Chinese & Pizzateria",
-  "description": "Online ordering & delivery platform with Korean-Style Pocket Pizzas (R, C, S shapes), Chinese delicacies, live order tracking, Razorpay UPI checkout, and admin dashboard.",
-  "requestFramePermissions": [],
+  "description": "Online ordering & delivery platform with Korean-Style Pocket Pizzas (R, C, S shapes), Chinese delicacies, order tracking, Razorpay UPI checkout, and admin dashboard.",
+  "requestFramePermissions": ["geolocation"],
   "majorCapabilities": [
     "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
   ]

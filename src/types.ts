@@ -90,6 +90,8 @@ export interface CustomerDetails {
   landmark?: string;
   tableNumber?: string;
   notes?: string;
+  latitude?: number;
+  longitude?: number;
 }
 
 export interface Order {

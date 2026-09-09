@@ -141,6 +141,8 @@ ALTER TABLE customers ADD COLUMN IF NOT EXISTS email VARCHAR(255);
 ALTER TABLE customers ADD COLUMN IF NOT EXISTS address TEXT;
 ALTER TABLE customers ADD COLUMN IF NOT EXISTS landmark TEXT;
 ALTER TABLE customers ADD COLUMN IF NOT EXISTS notes TEXT;
+ALTER TABLE customers ADD COLUMN IF NOT EXISTS latitude NUMERIC(10, 7);
+ALTER TABLE customers ADD COLUMN IF NOT EXISTS longitude NUMERIC(10, 7);
 ALTER TABLE customers ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
 
 -- ==========================================================
@@ -262,6 +264,8 @@ ALTER TABLE orders ADD COLUMN IF NOT EXISTS driver_name VARCHAR(100);
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS driver_phone VARCHAR(50);
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS driver_vehicle VARCHAR(100);
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS customer_snapshot JSONB;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS customer_latitude NUMERIC(10, 7);
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS customer_longitude NUMERIC(10, 7);
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
 
 -- ==========================================================
