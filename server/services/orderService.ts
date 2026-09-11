@@ -205,8 +205,8 @@ export async function createOrder(payload: CreateOrderPayload): Promise<Order> {
   const grandTotal = Math.round((taxableAmount + tax + deliveryFee) * 100) / 100;
 
   // Determine KOT station assignment
-  const hasPizza = payload.items.some((i) => i.selectedShape || i.menuItem.isPocketPizza || i.menuItem.category?.includes('pizza'));
-  const hasChinese = payload.items.some((i) => !i.menuItem.isPocketPizza && (i.menuItem.category?.includes('chinese') || i.menuItem.category?.includes('rice') || i.menuItem.category?.includes('noodle') || i.menuItem.category?.includes('momo')));
+  const hasPizza = payload.items.some((i) => i.selectedShape || i.menuItem?.isPocketPizza || i.menuItem?.category?.includes('pizza'));
+  const hasChinese = payload.items.some((i) => !i.menuItem?.isPocketPizza && (i.menuItem?.category?.includes('chinese') || i.menuItem?.category?.includes('rice') || i.menuItem?.category?.includes('noodle') || i.menuItem?.category?.includes('momo')));
   const kotStation = hasPizza && hasChinese ? 'All Stations' : hasPizza ? 'Pizza Oven Station' : 'Chinese Wok Station';
 
   const internalOrderId = crypto.randomUUID();
@@ -820,6 +820,72 @@ export async function updateOrderStatus(
   }
 
   return inMemUpdated;
+}
+
+export async function cancelOrderIfPending(
+  orderIdentifier: string,
+  note: string = 'Cancelled by customer (wrongly placed)',
+  restaurantId: string = DEFAULT_RESTAURANT_ID
+): Promise<Order | null> {
+  if (isPostgresRunning()) {
+    try {
+      const updateRes = await query(
+        `UPDATE orders SET status = 'cancelled', updated_at = NOW()
+         WHERE (id::text = $1 OR order_number = $1)
+           AND restaurant_id = $2
+           AND LOWER(status) IN ('placed', 'pending')
+         RETURNING *`,
+        [orderIdentifier, restaurantId]
+      );
+      if (updateRes.rows.length === 0) return null;
+      const order = updateRes.rows[0];
+
+      await query(
+        `INSERT INTO order_status_history (order_id, restaurant_id, status, note, created_at)
+         VALUES ($1, $2, 'cancelled', $3, NOW())`,
+        [order.id, restaurantId, note]
+      );
+
+      await query(
+        `UPDATE kots SET status = 'cancelled', updated_at = NOW() WHERE order_id = $1 AND restaurant_id = $2`,
+        [order.id, restaurantId]
+      );
+
+      return await getOrderById(order.id, restaurantId);
+    } catch (err) {
+      console.error('[OrderService] Error in cancelOrderIfPending PG:', err);
+      return null;
+    }
+  }
+
+  // In-Memory fallback
+  const orderIdx = inMemoryDb.orders.findIndex(
+    (o) =>
+      (o.id === orderIdentifier || o.order_number === orderIdentifier) &&
+      o.restaurant_id === restaurantId &&
+      ['placed', 'pending'].includes((o.status || '').toLowerCase())
+  );
+  if (orderIdx === -1) return null;
+
+  const orderId = inMemoryDb.orders[orderIdx].id;
+  inMemoryDb.orders[orderIdx].status = 'cancelled';
+  inMemoryDb.orders[orderIdx].updated_at = new Date().toISOString();
+
+  inMemoryDb.order_status_history.push({
+    id: crypto.randomUUID(),
+    order_id: orderId,
+    restaurant_id: restaurantId,
+    status: 'cancelled',
+    note,
+    created_at: new Date().toISOString(),
+  });
+
+  const kot = inMemoryDb.kots.find((k) => k.order_id === orderId);
+  if (kot) {
+    kot.status = 'cancelled';
+  }
+
+  return await getOrderById(orderId, restaurantId);
 }
 
 export async function deleteOrder(orderIdentifier: string, restaurantId: string = DEFAULT_RESTAURANT_ID): Promise<boolean> {

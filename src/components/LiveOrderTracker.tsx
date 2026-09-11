@@ -5,13 +5,11 @@ import {
   MapPin,
   Clock,
   RefreshCw,
-  Printer,
   MessageSquare,
   AlertCircle,
   Calendar as CalendarIcon,
   Store,
 } from 'lucide-react';
-import { PrintModal } from './PrintModal';
 import { OrderCalendarView } from './OrderCalendarView';
 import { GoogleMapsLiveTracker, MOZZ_RESTAURANT_LOCATION } from './GoogleMapsLiveTracker';
 
@@ -74,19 +72,31 @@ export const LiveOrderTracker: React.FC<LiveOrderTrackerProps> = ({ onBackToMenu
   } = useStore();
 
   const [searchOrderId, setSearchOrderId] = useState('');
-  const [isPrintModalOpen, setIsPrintModalOpen] = useState(false);
   const [trackerView, setTrackerView] = useState<'live' | 'calendar'>('live');
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [detectedAddress, setDetectedAddress] = useState<string | null>(null);
+  const [isCancelling, setIsCancelling] = useState(false);
+  const [cancellationError, setCancellationError] = useState<string | null>(null);
 
   const order = activeOrder || (activeOrderId ? orders.find((o) => o.id === activeOrderId) : orders[0]);
 
-  // Automatic 10-second polling for active order (stops when delivered or cancelled)
+  // Clear any previous cancellation error when viewing a different order
+  useEffect(() => {
+    setCancellationError(null);
+  }, [order?.id]);
+
+  // Automatic 10-second polling for active order (stops when delivered, completed, or cancelled)
   useEffect(() => {
     const targetId = order?.id || activeOrderId;
     if (!targetId) return;
 
-    if (order && (order.status === 'delivered' || order.status === 'cancelled')) {
+    const statusStr = (order?.status || '').toLowerCase();
+    if (
+      statusStr === 'delivered' ||
+      statusStr === 'completed' ||
+      statusStr === 'cancelled' ||
+      statusStr === 'rejected'
+    ) {
       return;
     }
 
@@ -179,25 +189,61 @@ export const LiveOrderTracker: React.FC<LiveOrderTrackerProps> = ({ onBackToMenu
     );
   }
 
-  const currentStageIndex = STAGES.findIndex((s) => s.status === order.status);
-  const isDelivered = order.status === 'delivered';
-  const isCancelled = order.status === 'cancelled';
+  const getStageIndex = (status: string) => {
+    switch (status) {
+      case 'placed':
+      case 'pending':
+        return 0;
+      case 'confirmed':
+      case 'accepted':
+        return 1;
+      case 'baking':
+      case 'preparing':
+        return 2;
+      case 'packing':
+        return 3;
+      case 'out_for_delivery':
+      case 'ready_for_pickup':
+      case 'ready':
+        return 4;
+      case 'delivered':
+      case 'completed':
+        return 5;
+      default:
+        return -1;
+    }
+  };
+
+  const currentStageIndex = getStageIndex(order.status);
+  const isDelivered = order.status === 'delivered' || (order.status as string) === 'completed';
+  const isCancelled = order.status === 'cancelled' || (order.status as string) === 'rejected';
+  const isActive = !isDelivered && !isCancelled;
+  // Cancellation is allowed ONLY while the order is in initial pending/placed state
+  const isCustomerCancellable = (order.status === 'placed' || (order.status as string) === 'pending') && isActive;
 
   const getStatusHeadline = () => {
-    switch (order.status) {
+    switch (order.status as string) {
       case 'placed':
+      case 'pending':
         return 'Order Placed • Sent to MOZZ Kitchen';
       case 'confirmed':
+      case 'accepted':
         return 'Order Confirmed • Assigned to Station';
       case 'baking':
+      case 'preparing':
         return 'Baking & Cooking in Stone-Deck Oven';
       case 'packing':
         return 'Quality Check & Thermal Packing';
       case 'out_for_delivery':
         return 'Out for Delivery • Dispatched from Kitchen';
+      case 'ready_for_pickup':
+      case 'ready':
+        return 'Order Ready for Pickup';
       case 'delivered':
+      case 'completed':
         return 'Order Delivered to Doorstep!';
       case 'cancelled':
+      case 'rejected':
         return 'Order Cancelled';
       default:
         return 'Order In Progress';
@@ -276,10 +322,6 @@ export const LiveOrderTracker: React.FC<LiveOrderTrackerProps> = ({ onBackToMenu
             setActiveOrderId(ord.id);
             setTrackerView('live');
           }}
-          onPrintBill={(ord) => {
-            setActiveOrderId(ord.id);
-            setIsPrintModalOpen(true);
-          }}
         />
       ) : (
         /* Main Tracking Grid */
@@ -351,69 +393,101 @@ export const LiveOrderTracker: React.FC<LiveOrderTrackerProps> = ({ onBackToMenu
               </div>
             </div>
 
-            {/* Genuine Kitchen / Order-Status Timeline */}
-            <div className="bg-white border border-slate-200 rounded-3xl p-5 sm:p-6 shadow-sm space-y-4">
-              <div className="flex items-center justify-between">
-                <h3 className="text-xs font-bold uppercase tracking-wider text-rose-600">
-                  Genuine Kitchen / Order-Status Timeline
+            {/* If Delivered/Completed: Hide entire Order-Status Timeline and replace with compact final confirmation */}
+            {isDelivered && (
+              <div className="bg-emerald-50/90 border border-emerald-200 rounded-3xl p-6 shadow-sm text-center space-y-2">
+                <div className="w-12 h-12 bg-emerald-100 rounded-full flex items-center justify-center mx-auto text-emerald-600 font-bold text-xl shadow-xs">
+                  ✓
+                </div>
+                <h3 className="text-base sm:text-lg font-bold text-emerald-900">
+                  Order delivered successfully. Thank you for ordering from MOZZ!
                 </h3>
-                <span className="text-[10px] text-slate-400 font-mono">
-                  Order #{order.id}
-                </span>
+                <p className="text-xs text-emerald-700 font-medium">
+                  Your food was delivered fresh & hot. We hope you enjoyed your meal!
+                </p>
               </div>
+            )}
 
-              <div className="space-y-4">
-                {STAGES.map((stage, idx) => {
-                  const isPassed = idx <= currentStageIndex;
-                  const isCurrent = idx === currentStageIndex;
+            {/* If Cancelled: Show clear cancellation notice instead of normal active timeline */}
+            {isCancelled && (
+              <div className="bg-rose-50/90 border border-rose-200 rounded-3xl p-6 shadow-sm text-center space-y-2">
+                <div className="w-12 h-12 bg-rose-100 rounded-full flex items-center justify-center mx-auto text-rose-600 font-bold text-xl shadow-xs">
+                  ✕
+                </div>
+                <h3 className="text-base sm:text-lg font-bold text-rose-900">
+                  Order Cancelled
+                </h3>
+                <p className="text-xs text-rose-700 font-medium max-w-md mx-auto">
+                  This order has been cancelled. If you need any assistance or have questions regarding refunds, please contact our support via WhatsApp.
+                </p>
+              </div>
+            )}
 
-                  return (
-                    <div key={stage.status} className="flex items-start gap-4 relative">
-                      {/* Connecting line */}
-                      {idx < STAGES.length - 1 && (
-                        <div
-                          className={`absolute left-4 top-8 bottom-0 w-0.5 -ml-px transition-colors ${
-                            idx < currentStageIndex ? 'bg-rose-500' : 'bg-slate-200'
-                          }`}
-                        />
-                      )}
+            {/* Genuine Kitchen / Order-Status Timeline - ONLY visible for active orders */}
+            {isActive && (
+              <div className="bg-white border border-slate-200 rounded-3xl p-5 sm:p-6 shadow-sm space-y-4">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-rose-600">
+                    Kitchen & Order Progress Timeline
+                  </h3>
+                  <span className="text-[10px] text-slate-400 font-mono">
+                    Order #{order.id}
+                  </span>
+                </div>
 
-                      {/* Step Icon */}
-                      <div
-                        className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold transition-all relative z-10 ${
-                          isCurrent
-                            ? 'bg-rose-600 text-white ring-4 ring-rose-100 font-black shadow-xs'
-                            : isPassed
-                            ? 'bg-rose-100 text-rose-700 border border-rose-300'
-                            : 'bg-slate-100 text-slate-400 border border-slate-200'
-                        }`}
-                      >
-                        <span>{stage.icon}</span>
-                      </div>
+                <div className="space-y-4">
+                  {STAGES.map((stage, idx) => {
+                    const isPassed = idx <= currentStageIndex;
+                    const isCurrent = idx === currentStageIndex;
 
-                      {/* Step Details */}
-                      <div className="flex-1 pb-3">
-                        <div className="flex items-center justify-between">
-                          <h4
-                            className={`text-sm font-bold ${
-                              isCurrent ? 'text-rose-600' : isPassed ? 'text-slate-900' : 'text-slate-400'
+                    return (
+                      <div key={stage.status} className="flex items-start gap-4 relative">
+                        {/* Connecting line */}
+                        {idx < STAGES.length - 1 && (
+                          <div
+                            className={`absolute left-4 top-8 bottom-0 w-0.5 -ml-px transition-colors ${
+                              idx < currentStageIndex ? 'bg-rose-500' : 'bg-slate-200'
                             }`}
-                          >
-                            {stage.title}
-                          </h4>
-                          {isCurrent && (
-                            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-rose-50 text-rose-700 border border-rose-200">
-                              CURRENT STATUS
-                            </span>
-                          )}
+                          />
+                        )}
+
+                        {/* Step Icon */}
+                        <div
+                          className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold transition-all relative z-10 ${
+                            isCurrent
+                              ? 'bg-rose-600 text-white ring-4 ring-rose-100 font-black shadow-xs'
+                              : isPassed
+                              ? 'bg-rose-100 text-rose-700 border border-rose-300'
+                              : 'bg-slate-100 text-slate-400 border border-slate-200'
+                          }`}
+                        >
+                          <span>{stage.icon}</span>
                         </div>
-                        <p className="text-xs text-slate-500 mt-0.5">{stage.subtitle}</p>
+
+                        {/* Step Details */}
+                        <div className="flex-1 pb-3">
+                          <div className="flex items-center justify-between">
+                            <h4
+                              className={`text-sm font-bold ${
+                                isCurrent ? 'text-rose-600' : isPassed ? 'text-slate-900' : 'text-slate-400'
+                              }`}
+                            >
+                              {stage.title}
+                            </h4>
+                            {isCurrent && (
+                              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-rose-50 text-rose-700 border border-rose-200">
+                                CURRENT STATUS
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-xs text-slate-500 mt-0.5">{stage.subtitle}</p>
+                        </div>
                       </div>
-                    </div>
-                  );
-                })}
+                    );
+                  })}
+                </div>
               </div>
-            </div>
+            )}
           </div>
 
           {/* Right 5 Cols: Order Summary Receipt & Details */}
@@ -538,44 +612,62 @@ export const LiveOrderTracker: React.FC<LiveOrderTrackerProps> = ({ onBackToMenu
                 </div>
               </div>
 
-              {/* Actions: Print Receipt & WhatsApp Support */}
-              <div className="grid grid-cols-2 gap-2 pt-2">
-                <button
-                  onClick={() => setIsPrintModalOpen(true)}
-                  className="py-2.5 px-3 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold flex items-center justify-center gap-1.5 border border-slate-200 transition cursor-pointer"
-                >
-                  <Printer className="w-3.5 h-3.5" />
-                  <span>Print Bill</span>
-                </button>
-
+              {/* WhatsApp Support */}
+              <div className="pt-2">
                 <a
                   href={`https://wa.me/?text=Hi%20MOZZ%20Team%2C%20I%20am%20tracking%20my%20Order%20%23${order.id}%20total%20INR%20${order.grandTotal}`}
                   target="_blank"
                   rel="noreferrer"
-                  className="py-2.5 px-3 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-700 text-xs font-semibold flex items-center justify-center gap-1.5 border border-emerald-200 transition"
+                  className="w-full py-2.5 px-3 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-700 text-xs font-semibold flex items-center justify-center gap-1.5 border border-emerald-200 transition"
                 >
                   <MessageSquare className="w-3.5 h-3.5 text-emerald-600" />
                   <span>WhatsApp Help</span>
                 </a>
               </div>
 
-              {/* Cancel Button for Wrongly Placed Orders */}
-              {order.status !== 'delivered' && order.status !== 'cancelled' && (
+              {/* Cancellation error notification if backend rejected cancellation */}
+              {cancellationError && (
+                <div className="pt-2">
+                  <div className="p-3 bg-amber-50 border border-amber-200 rounded-2xl text-xs text-amber-900 flex items-start gap-2">
+                    <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                    <div>{cancellationError}</div>
+                  </div>
+                </div>
+              )}
+
+              {/* Cancel Button for Wrongly Placed Orders: ONLY rendered while order is in initial pending/placed state */}
+              {isCustomerCancellable && (
                 <div className="pt-2">
                   <button
-                    onClick={() => {
+                    disabled={isCancelling}
+                    onClick={async () => {
+                      if (!order?.id || isCancelling) return;
                       if (window.confirm(`Are you sure you want to cancel Order #${order.id}?`)) {
-                        cancelOrder(order.id, 'Cancelled by customer (wrongly placed)');
+                        setIsCancelling(true);
+                        setCancellationError(null);
+                        try {
+                          const result = await cancelOrder(order.id, 'Cancelled by customer (wrongly placed)');
+                          if (result && !result.success) {
+                            setCancellationError(
+                              result.error ||
+                                'This order can no longer be cancelled because preparation has started. Please contact the restaurant for help.'
+                            );
+                          }
+                        } catch (err: any) {
+                          setCancellationError(err.message || 'Failed to cancel order');
+                        } finally {
+                          setIsCancelling(false);
+                        }
                       }
                     }}
-                    className="w-full py-2 px-3 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200 text-xs font-semibold transition cursor-pointer"
+                    className="w-full py-2.5 px-3 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200 text-xs font-semibold transition cursor-pointer disabled:opacity-50 flex items-center justify-center gap-1.5"
                   >
-                    Cancel Wrongly Placed Order ✕
+                    <span>{isCancelling ? 'Cancelling...' : 'Cancel Wrongly Placed Order ✕'}</span>
                   </button>
                 </div>
               )}
 
-              {order.status === 'cancelled' && (
+              {isCancelled && (
                 <div className="p-3 bg-rose-50 border border-rose-200 rounded-2xl text-center text-xs font-bold text-rose-700">
                   This order was cancelled.
                 </div>
@@ -583,15 +675,6 @@ export const LiveOrderTracker: React.FC<LiveOrderTrackerProps> = ({ onBackToMenu
             </div>
           </div>
         </div>
-      )}
-
-      {/* Customer Thermal Receipt Modal */}
-      {isPrintModalOpen && (
-        <PrintModal
-          order={order}
-          type="receipt"
-          onClose={() => setIsPrintModalOpen(false)}
-        />
       )}
     </div>
   );

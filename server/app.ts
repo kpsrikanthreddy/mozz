@@ -1035,10 +1035,34 @@ export function createApp(): express.Application {
       if (!order) {
         return res.status(404).json({ error: 'Order not found' });
       }
-      if (['baking', 'packing', 'out_for_delivery', 'delivered'].includes(order.status)) {
-        return res.status(400).json({ error: 'Order cannot be cancelled as kitchen is already preparing/delivering it' });
+
+      const statusLower = (order.status || '').toLowerCase();
+      // Cancellation is ONLY permitted while the order is in the initial pending/placed state
+      if (statusLower !== 'placed' && statusLower !== 'pending') {
+        if (statusLower === 'cancelled') {
+          return res.status(400).json({ error: 'This order has already been cancelled.' });
+        }
+        if (statusLower === 'delivered' || statusLower === 'completed') {
+          return res.status(400).json({ error: 'This order has already been delivered and cannot be cancelled.' });
+        }
+        return res.status(400).json({
+          error: 'This order can no longer be cancelled because preparation has started. Please contact the restaurant for help.',
+        });
       }
-      const updated = await orderService.updateOrderStatus(req.params.id, 'cancelled', reason || 'Cancelled by customer');
+
+      // Atomically update order status ensuring it is still in placed/pending state
+      const updated = await orderService.cancelOrderIfPending(
+        req.params.id,
+        reason || 'Cancelled by customer (wrongly placed)',
+        order.restaurantId
+      );
+
+      if (!updated) {
+        return res.status(400).json({
+          error: 'This order can no longer be cancelled because preparation has started. Please contact the restaurant for help.',
+        });
+      }
+
       res.json(updated);
     } catch (err: any) {
       res.status(500).json({ error: 'Failed to cancel order', details: err.message });

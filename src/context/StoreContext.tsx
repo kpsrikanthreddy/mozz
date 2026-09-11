@@ -53,7 +53,7 @@ interface StoreContextType {
   updateOrderDeliveryLocation: (orderId: string, location: { latitude: number; longitude: number; address?: string }) => Promise<Order | null>;
   setActiveOrderId: (orderId: string | null) => void;
   fetchOrderById: (orderId: string) => Promise<Order | null>;
-  cancelOrder: (orderId: string, reason?: string) => Promise<void>;
+  cancelOrder: (orderId: string, reason?: string) => Promise<{ success: boolean; error?: string; order?: Order }>;
   deleteOrder: (orderId: string) => Promise<void>;
   deleteKot: (orderId: string) => Promise<void>;
   refreshOrders: () => Promise<void>;
@@ -561,23 +561,34 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     }
   }, []);
 
-  const cancelOrder = async (orderId: string, reason?: string) => {
+  const cancelOrder = async (
+    orderId: string,
+    reason?: string
+  ): Promise<{ success: boolean; error?: string; order?: Order }> => {
     try {
       const res = await fetch(`/api/orders/${encodeURIComponent(orderId)}/cancel`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ reason: reason || 'Order cancelled by customer' }),
+        body: JSON.stringify({ reason: reason || 'Cancelled by customer (wrongly placed)' }),
       });
       if (res.ok) {
         const updatedOrder: Order = await res.json();
         setOrders((prev) => prev.map((o) => (o.id === orderId ? updatedOrder : o)));
         soundService.playChime('notification');
+        return { success: true, order: updatedOrder };
       } else {
         const errData = await res.json().catch(() => ({}));
-        console.error('[StoreContext] Cancel order failed on server:', errData.error || res.statusText);
+        const errorMsg =
+          errData.error || res.statusText || 'Failed to cancel order';
+        console.error('[StoreContext] Cancel order failed on server:', errorMsg);
+        // Refresh latest order from server so customer view updates to current status
+        await fetchOrderById(orderId);
+        return { success: false, error: errorMsg };
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error('[StoreContext] Error cancelling order:', err);
+      await fetchOrderById(orderId);
+      return { success: false, error: err.message || 'Network error cancelling order' };
     }
   };
 

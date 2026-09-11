@@ -470,6 +470,173 @@ async function runTestSuite() {
       );
     });
 
+    // =========================================================================
+    // Scenario 7: Customer Order Tracking UI, Cancellation & Print Restrictions
+    // =========================================================================
+    console.log('\n--- Scenario 7: Customer Order Tracking UI & Cancellation Rules ---');
+
+    await test('1. Customer never sees Print Bill or Tax Invoice in customer tracking', () => {
+      assert(
+        !liveTrackerContent.includes('Print Bill'),
+        'Customer LiveOrderTracker must not contain "Print Bill" button'
+      );
+      assert(
+        !liveTrackerContent.includes('isPrintModalOpen'),
+        'Customer LiveOrderTracker must not maintain isPrintModalOpen state'
+      );
+      assert(
+        !liveTrackerContent.includes('onPrintBill'),
+        'Customer LiveOrderTracker must not pass onPrintBill to calendar view'
+      );
+    });
+
+    await test('2. Cancellation is available only for initial pending/placed status', () => {
+      assert(
+        liveTrackerContent.includes("isCustomerCancellable = (order.status === 'placed' || (order.status as string) === 'pending') && isActive"),
+        'LiveOrderTracker must strictly constrain isCustomerCancellable to placed/pending'
+      );
+      assert(
+        liveTrackerContent.includes('{isCustomerCancellable && ('),
+        'LiveOrderTracker must guard cancellation button with isCustomerCancellable'
+      );
+    });
+
+    await test('3. Backend rejects cancellation after acceptance/preparation with clear error', async () => {
+      // Create a test order
+      const createRes = await makeRequest(server, {
+        path: '/api/orders',
+        method: 'POST',
+        body: {
+          items: [
+            {
+              menuItem: {
+                id: 'm-test',
+                name: 'Test Pizza',
+                price: 299,
+                category: 'pizza',
+              },
+              quantity: 1,
+              unitPrice: 299,
+              totalPrice: 299,
+            },
+          ],
+          orderType: 'delivery',
+          customer: {
+            name: 'Cancellation Test Customer',
+            phone: '9876543210',
+            address: '123 Test Street, Whitefield',
+          },
+          paymentMethod: 'cod',
+        },
+      });
+      assert.strictEqual(createRes.status, 201, 'Order creation must succeed with 201');
+      const orderId = createRes.body.id;
+
+      // Advance order status to 'confirmed' (acceptance)
+      await updateOrderStatus(orderId, 'confirmed', 'Kitchen accepted order');
+
+      // Attempt to cancel as customer
+      const cancelRes = await makeRequest(server, {
+        path: `/api/orders/${encodeURIComponent(orderId)}/cancel`,
+        method: 'POST',
+        body: { reason: 'Customer changed mind' },
+      });
+
+      assert.strictEqual(cancelRes.status, 400, 'Backend must reject cancellation of confirmed order with HTTP 400');
+      assert.strictEqual(
+        cancelRes.body.error,
+        'This order can no longer be cancelled because preparation has started. Please contact the restaurant for help.',
+        'Backend must return exact required error message'
+      );
+
+      // Advance order status to 'baking' (preparation)
+      await updateOrderStatus(orderId, 'baking', 'Stone deck oven baking');
+      const cancelBakingRes = await makeRequest(server, {
+        path: `/api/orders/${encodeURIComponent(orderId)}/cancel`,
+        method: 'POST',
+        body: { reason: 'Customer changed mind' },
+      });
+      assert.strictEqual(cancelBakingRes.status, 400, 'Backend must reject cancellation of baking order with HTTP 400');
+      assert.strictEqual(
+        cancelBakingRes.body.error,
+        'This order can no longer be cancelled because preparation has started. Please contact the restaurant for help.'
+      );
+
+      // Now test that a placed/pending order CAN be cancelled
+      const placedOrderRes = await makeRequest(server, {
+        path: '/api/orders',
+        method: 'POST',
+        body: {
+          items: [
+            {
+              menuItem: {
+                id: 'm-test-2',
+                name: 'Test Pizza 2',
+                price: 299,
+                category: 'pizza',
+              },
+              quantity: 1,
+              unitPrice: 299,
+              totalPrice: 299,
+            },
+          ],
+          orderType: 'delivery',
+          customer: {
+            name: 'Cancel Allowed Customer',
+            phone: '9876543210',
+            address: '456 Test Lane',
+          },
+          paymentMethod: 'cod',
+        },
+      });
+      assert.strictEqual(placedOrderRes.status, 201, 'Placed order creation must succeed with 201');
+      const placedOrderId = placedOrderRes.body.id;
+      const cancelPlacedRes = await makeRequest(server, {
+        path: `/api/orders/${encodeURIComponent(placedOrderId)}/cancel`,
+        method: 'POST',
+        body: { reason: 'Wrong address selected' },
+      });
+      assert.strictEqual(cancelPlacedRes.status, 200, 'Backend must permit cancellation of initial placed order');
+      assert.strictEqual(cancelPlacedRes.body.status, 'cancelled');
+    });
+
+    await test('4. Timeline is visible for active orders', () => {
+      assert(
+        liveTrackerContent.includes('{isActive && ('),
+        'Timeline must be conditionally rendered when isActive is true'
+      );
+      assert(
+        liveTrackerContent.includes('Kitchen & Order Progress Timeline'),
+        'Timeline must display active kitchen progress header'
+      );
+    });
+
+    await test('5. Timeline is hidden and final delivered message appears for DELIVERED/COMPLETED orders', () => {
+      const deliveredMessage = 'Order delivered successfully. Thank you for ordering from MOZZ!';
+      assert(
+        liveTrackerContent.includes(deliveredMessage),
+        'LiveOrderTracker.tsx must include exact delivered confirmation message'
+      );
+      assert(
+        liveTrackerContent.includes('{isDelivered && ('),
+        'Delivered message must be rendered conditionally when isDelivered is true'
+      );
+      assert(
+        liveTrackerContent.includes('{isCancelled && ('),
+        'Cancelled message must be rendered conditionally when isCancelled is true'
+      );
+    });
+
+    await test('6. Multi-tenant and order-ownership checks remain intact', async () => {
+      // Trying to cancel non-existent order returns 404
+      const nonExistentRes = await makeRequest(server, {
+        path: '/api/orders/NON-EXISTENT-ID/cancel',
+        method: 'POST',
+        body: {},
+      });
+      assert.strictEqual(nonExistentRes.status, 404, 'Non-existent order must return 404');
+    });
+
   } finally {
     server.close();
   }
