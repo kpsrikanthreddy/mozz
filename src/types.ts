@@ -57,13 +57,20 @@ export interface CartItem {
 
 export type OrderStatus =
   | 'placed'
+  | 'pending'
   | 'confirmed'
+  | 'accepted'
   | 'baking'
+  | 'preparing'
   | 'packing'
   | 'out_for_delivery'
   | 'ready_for_pickup'
+  | 'ready'
   | 'delivered'
-  | 'cancelled';
+  | 'completed'
+  | 'settled'
+  | 'cancelled'
+  | 'rejected';
 
 export type OrderType = 'delivery' | 'takeaway' | 'dine_in';
 

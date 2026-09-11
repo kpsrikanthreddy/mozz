@@ -14,8 +14,8 @@ export const CustomerDetailsModal: React.FC<CustomerDetailsModalProps> = ({
   isOpen,
   onClose,
   onSuccess,
-  title = 'Customer Verification',
-  subtitle = 'Please provide your Name & WhatsApp number before placing your order.',
+  title = 'Enter Customer Details',
+  subtitle = 'Please provide your name and mobile number for your order updates.',
 }) => {
   const { customerDetails, setCustomerDetails } = useStore();
 
@@ -50,8 +50,9 @@ export const CustomerDetailsModal: React.FC<CustomerDetailsModalProps> = ({
       return;
     }
 
-    if (!cleanPhone || cleanPhone.length !== 10) {
-      setError('Please enter a valid 10-digit WhatsApp phone number');
+    // Strict Indian mobile number validation (10 digits starting with 6, 7, 8, or 9)
+    if (!/^[6-9]\d{9}$/.test(cleanPhone)) {
+      setError('Please enter a valid 10-digit Indian mobile number (starts with 6, 7, 8, or 9)');
       return;
     }
 
@@ -76,7 +77,7 @@ export const CustomerDetailsModal: React.FC<CustomerDetailsModalProps> = ({
         <div className="flex items-start justify-between mb-4">
           <div className="flex items-center gap-3">
             <div className="w-11 h-11 rounded-2xl bg-emerald-50 text-emerald-600 border border-emerald-200 flex items-center justify-center font-bold">
-              <MessageSquare className="w-6 h-6" />
+              <Phone className="w-5 h-5 text-emerald-600" />
             </div>
             <div>
               <h3 className="text-lg font-extrabold text-slate-900">{title}</h3>
@@ -106,6 +107,7 @@ export const CustomerDetailsModal: React.FC<CustomerDetailsModalProps> = ({
             </label>
             <input
               type="text"
+              id="customer-name-input"
               required
               autoFocus
               value={name}
@@ -118,7 +120,7 @@ export const CustomerDetailsModal: React.FC<CustomerDetailsModalProps> = ({
           <div>
             <label className="block text-xs font-bold text-slate-700 mb-1.5 flex items-center gap-1.5">
               <Phone className="w-3.5 h-3.5 text-emerald-600" />
-              WhatsApp Mobile Number <span className="text-rose-500">*</span>
+              Mobile Number <span className="text-rose-500">*</span>
             </label>
             <div className="relative flex items-center">
               <span className="absolute left-3 text-xs font-bold text-slate-500 pointer-events-none">
@@ -126,6 +128,7 @@ export const CustomerDetailsModal: React.FC<CustomerDetailsModalProps> = ({
               </span>
               <input
                 type="tel"
+                id="customer-phone-input"
                 required
                 maxLength={10}
                 value={phone}
@@ -133,18 +136,19 @@ export const CustomerDetailsModal: React.FC<CustomerDetailsModalProps> = ({
                   const val = e.target.value.replace(/\D/g, '');
                   if (val.length <= 10) setPhone(val);
                 }}
-                placeholder="10-digit number (e.g. 9876543210)"
+                placeholder="10-digit mobile number (e.g. 9876543210)"
                 className="w-full bg-slate-50 border border-slate-200 focus:border-emerald-500 focus:bg-white rounded-xl pl-12 pr-3.5 py-2.5 text-sm font-medium text-slate-900 placeholder-slate-400 outline-none transition"
               />
             </div>
             <p className="text-[11px] text-slate-400 mt-1 flex items-center gap-1">
-              <span>💬</span> We will send your digital order receipt & live tracking link via WhatsApp.
+              <span>📱</span> We will send your order confirmation & live tracking updates to this mobile number.
             </p>
           </div>
 
           <div className="pt-2">
             <button
               type="submit"
+              id="customer-submit-btn"
               className="w-full py-3.5 px-5 rounded-2xl bg-gradient-to-r from-emerald-600 via-rose-600 to-amber-600 hover:opacity-95 text-white font-bold text-sm shadow-md shadow-emerald-950/20 active:scale-[0.99] transition flex items-center justify-center gap-2"
             >
               <CheckCircle2 className="w-4 h-4" />

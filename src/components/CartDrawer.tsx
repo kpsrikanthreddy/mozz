@@ -87,6 +87,13 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({ onOpenCheckout }) => {
       return;
     }
 
+    const cleanPhone = (customerDetails.phone || '').trim().replace(/\D/g, '');
+    if (!/^[6-9]\d{9}$/.test(cleanPhone)) {
+      setValidationError('Please enter a valid 10-digit Indian mobile number (starts with 6, 7, 8, or 9).');
+      promptCustomerVerification();
+      return;
+    }
+
     if (orderType === 'delivery' && !customerDetails.address?.trim()) {
       setValidationError('Please enter your delivery street address.');
       return;
@@ -359,7 +366,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({ onOpenCheckout }) => {
                     <div>
                       <label className="block text-[11px] font-semibold text-slate-700 mb-1 flex items-center gap-1">
                         <Phone className="w-3 h-3 text-emerald-600" />
-                        <span>10-Digit WhatsApp Mobile Number *</span>
+                        <span>10-Digit Mobile Number *</span>
                       </label>
                       <div className="relative flex items-center">
                         <span className="absolute left-3 text-xs font-bold text-slate-500 pointer-events-none">

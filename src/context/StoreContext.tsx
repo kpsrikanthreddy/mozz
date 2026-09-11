@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import { MenuItem, CartItem, Order, OrderStatus, OrderType, CustomerDetails, PaymentMethod, QRSessionInfo, EntrySource } from '../types';
 import { INITIAL_MENU, PROMO_COUPONS } from '../data/menuData';
 import { soundService } from '../utils/audio';
@@ -80,17 +80,32 @@ interface StoreContextType {
 
 const StoreContext = createContext<StoreContextType | undefined>(undefined);
 
-const LOCAL_STORAGE_KEY_CART = 'mozz_cart_v1';
-const LOCAL_STORAGE_KEY_ACTIVE_ORDER = 'mozz_active_order_id_v1';
-const LOCAL_STORAGE_KEY_ADMIN = 'mozz_admin_auth_v1';
-const LOCAL_STORAGE_KEY_CUSTOMER = 'mozz_customer_details_v1';
+export const LOCAL_STORAGE_KEY_CART = 'mozz_cart_v1';
+export const LOCAL_STORAGE_KEY_ACTIVE_ORDER = 'mozz_active_order_id_v1';
+export const LOCAL_STORAGE_KEY_ADMIN = 'mozz_admin_auth_v1';
+export const LOCAL_STORAGE_KEY_CUSTOMER = 'mozz_customer_details_v1';
 
-const INITIAL_CUSTOMER: CustomerDetails = {
+export const INITIAL_CUSTOMER: CustomerDetails = {
   name: '',
   phone: '',
   address: '',
   landmark: '',
   tableNumber: 'Table 1',
+};
+
+export const isTerminalSuccessfulStatus = (status: string | undefined | null): boolean => {
+  if (!status) return false;
+  const s = status.toLowerCase().trim();
+  return s === 'delivered' || s === 'completed' || s === 'settled';
+};
+
+export const clearCustomerOrderSession = () => {
+  try {
+    localStorage.removeItem(LOCAL_STORAGE_KEY_ACTIVE_ORDER);
+    localStorage.removeItem(LOCAL_STORAGE_KEY_CUSTOMER);
+    sessionStorage.removeItem(LOCAL_STORAGE_KEY_ACTIVE_ORDER);
+    sessionStorage.removeItem(LOCAL_STORAGE_KEY_CUSTOMER);
+  } catch {}
 };
 
 export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -105,8 +120,25 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [orders, setOrders] = useState<Order[]>([]);
   const [isLoadingOrders, setIsLoadingOrders] = useState(false);
 
-  // Active tracked order ID
-  const [activeOrderId, setActiveOrderId] = useState<string | null>('MOZZ-8901');
+  // Active tracked order ID (null by default; only set when an active order is being placed or tracked)
+  const [activeOrderId, setActiveOrderId] = useState<string | null>(null);
+
+  // Set to track cleaned terminal orders to ensure cleanup happens exactly once
+  const cleanedOrdersRef = useRef<Set<string>>(new Set());
+
+  // Clear completed customer session state from browser storage and memory
+  const clearCompletedCustomerSession = useCallback((orderId: string) => {
+    if (!orderId) return;
+    if (cleanedOrdersRef.current.has(orderId)) return;
+    cleanedOrdersRef.current.add(orderId);
+
+    // 1. Clear local and session storage
+    clearCustomerOrderSession();
+
+    // 2. Clear in-memory active order reference and customer details
+    setActiveOrderId(null);
+    setCustomerDetailsState(INITIAL_CUSTOMER);
+  }, []);
 
   // Entry Source & Signed QR Session State
   const [qrSession, setQrSession] = useState<QRSessionInfo>(() => {
@@ -155,15 +187,17 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       if (typeof window !== 'undefined') {
         const params = new URLSearchParams(window.location.search);
         const qOrderId = params.get('orderId') || params.get('order_id');
-        if (qOrderId) {
-          setActiveOrderId(qOrderId);
-          fetchOrderById(qOrderId);
-        } else {
-          const savedOrder = localStorage.getItem(LOCAL_STORAGE_KEY_ACTIVE_ORDER);
-          if (savedOrder) {
-            setActiveOrderId(savedOrder);
-            fetchOrderById(savedOrder);
-          }
+        const targetOrder = qOrderId || localStorage.getItem(LOCAL_STORAGE_KEY_ACTIVE_ORDER);
+        if (targetOrder) {
+          fetchOrderById(targetOrder).then((ord) => {
+            if (ord) {
+              if (isTerminalSuccessfulStatus(ord.status)) {
+                clearCompletedCustomerSession(ord.id);
+              } else {
+                setActiveOrderId(ord.id);
+              }
+            }
+          });
         }
       }
     } catch {}
@@ -337,9 +371,23 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   useEffect(() => {
     try {
-      localStorage.setItem(LOCAL_STORAGE_KEY_CUSTOMER, JSON.stringify(customerDetails));
+      if (customerDetails.name?.trim() || customerDetails.phone?.trim()) {
+        localStorage.setItem(LOCAL_STORAGE_KEY_CUSTOMER, JSON.stringify(customerDetails));
+      } else {
+        localStorage.removeItem(LOCAL_STORAGE_KEY_CUSTOMER);
+      }
     } catch {}
   }, [customerDetails]);
+
+  // Proactive listener: If the current active order reaches terminal successful status (delivered/completed/settled),
+  // automatically clear the browser customer session immediately.
+  useEffect(() => {
+    if (!activeOrderId) return;
+    const currentActive = orders.find((o) => o.id === activeOrderId);
+    if (currentActive && isTerminalSuccessfulStatus(currentActive.status)) {
+      clearCompletedCustomerSession(currentActive.id);
+    }
+  }, [orders, activeOrderId, clearCompletedCustomerSession]);
 
   // Sync sound service
   useEffect(() => {
@@ -358,7 +406,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     customerDetails.name &&
     customerDetails.name.trim().length >= 2 &&
     customerDetails.phone &&
-    customerDetails.phone.trim().replace(/\D/g, '').length === 10
+    /^[6-9]\d{9}$/.test(customerDetails.phone.trim().replace(/\D/g, ''))
   );
 
   const promptCustomerVerification = (onSuccessAction?: () => void): boolean => {
@@ -376,11 +424,12 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const setCustomerDetails = (details: Partial<CustomerDetails>) => {
     setCustomerDetailsState((prev) => {
       const updated = { ...prev, ...details };
+      const cleanPhone = (updated.phone || '').trim().replace(/\D/g, '');
+      const validPhone = /^[6-9]\d{9}$/.test(cleanPhone);
       if (
         updated.name &&
         updated.name.trim().length >= 2 &&
-        updated.phone &&
-        updated.phone.trim().replace(/\D/g, '').length === 10 &&
+        validPhone &&
         pendingCustomerAction
       ) {
         setTimeout(() => {
@@ -552,6 +601,9 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         const updatedOrder: Order = await res.json();
         setOrders((prev) => prev.map((o) => (o.id === orderId ? updatedOrder : o)));
         soundService.playChime('notification');
+        if (isTerminalSuccessfulStatus(updatedOrder.status)) {
+          clearCompletedCustomerSession(orderId);
+        }
       } else {
         const errData = await res.json().catch(() => ({}));
         console.error('[StoreContext] Status update failed on server:', errData.error || res.statusText);
@@ -559,7 +611,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     } catch (err) {
       console.error('[StoreContext] Error updating order status:', err);
     }
-  }, []);
+  }, [clearCompletedCustomerSession]);
 
   const cancelOrder = async (
     orderId: string,
@@ -605,13 +657,19 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           }
           return [ord, ...prev];
         });
+        if (isTerminalSuccessfulStatus(ord.status)) {
+          const savedActive = typeof window !== 'undefined' ? localStorage.getItem(LOCAL_STORAGE_KEY_ACTIVE_ORDER) : null;
+          if (savedActive === ord.id || activeOrderId === ord.id) {
+            clearCompletedCustomerSession(ord.id);
+          }
+        }
         return ord;
       }
     } catch (err) {
       console.error('[StoreContext] Error fetching order by ID:', err);
     }
     return null;
-  }, []);
+  }, [activeOrderId, clearCompletedCustomerSession]);
 
   const updateOrderDeliveryLocation = useCallback(
     async (
@@ -818,7 +876,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     }
   };
 
-  const activeOrder = orders.find((o) => o.id === activeOrderId) || (orders.length > 0 ? orders[0] : null);
+  const activeOrder = activeOrderId ? orders.find((o) => o.id === activeOrderId) || null : null;
 
   return (
     <StoreContext.Provider

@@ -637,6 +637,189 @@ async function runTestSuite() {
       assert.strictEqual(nonExistentRes.status, 404, 'Non-existent order must return 404');
     });
 
+    // =========================================================================
+    // Scenario 8: Customer Session Cleanup & Header Customer-Details Action
+    // =========================================================================
+    console.log('\n--- Scenario 8: Customer Session Cleanup & Header Reset Rules ---');
+
+    const customerModalPath = path.resolve(process.cwd(), 'src/components/CustomerDetailsModal.tsx');
+    const storeContextPath = path.resolve(process.cwd(), 'src/context/StoreContext.tsx');
+    const cartDrawerPath = path.resolve(process.cwd(), 'src/components/CartDrawer.tsx');
+
+    const customerModalContent = fs.readFileSync(customerModalPath, 'utf-8');
+    const storeContextContent = fs.readFileSync(storeContextPath, 'utf-8');
+    const cartDrawerContent = fs.readFileSync(cartDrawerPath, 'utf-8');
+
+    await test('1. Terminal order status helper identifies DELIVERED, COMPLETED, and SETTLED', () => {
+      const terminalStatuses = ['delivered', 'DELIVERED', 'completed', 'COMPLETED', 'settled', 'SETTLED'];
+      for (const st of terminalStatuses) {
+        assert(
+          st.toLowerCase() === 'delivered' || st.toLowerCase() === 'completed' || st.toLowerCase() === 'settled',
+          `Status ${st} must be recognized as terminal`
+        );
+      }
+      assert(
+        storeContextContent.includes("s === 'delivered' || s === 'completed' || s === 'settled'"),
+        'isTerminalSuccessfulStatus helper must cover delivered, completed, and settled'
+      );
+    });
+
+    await test('2. Active order statuses (pending, baking, ready, out_for_delivery) do not trigger cleanup', () => {
+      const activeStatuses = [
+        'pending', 'placed', 'confirmed', 'accepted',
+        'baking', 'preparing', 'packing', 'ready',
+        'ready_for_pickup', 'out_for_delivery',
+      ];
+      for (const st of activeStatuses) {
+        assert(
+          st !== 'delivered' && st !== 'completed' && st !== 'settled',
+          `Active status ${st} must not be marked terminal`
+        );
+      }
+      assert(
+        storeContextContent.includes('if (currentActive && isTerminalSuccessfulStatus(currentActive.status))'),
+        'StoreContext must only clean session when status is verified as terminal'
+      );
+    });
+
+    await test('3. Delivered/completed order clears only local active-session data keys', () => {
+      assert(
+        storeContextContent.includes("export const LOCAL_STORAGE_KEY_ACTIVE_ORDER = 'mozz_active_order_id_v1'"),
+        'StoreContext must export active order localStorage key'
+      );
+      assert(
+        storeContextContent.includes("export const LOCAL_STORAGE_KEY_CUSTOMER = 'mozz_customer_details_v1'"),
+        'StoreContext must export customer details localStorage key'
+      );
+      assert(
+        storeContextContent.includes('localStorage.removeItem(LOCAL_STORAGE_KEY_ACTIVE_ORDER)'),
+        'Cleanup function must remove active order from localStorage'
+      );
+      assert(
+        storeContextContent.includes('localStorage.removeItem(LOCAL_STORAGE_KEY_CUSTOMER)'),
+        'Cleanup function must remove customer details from localStorage'
+      );
+      assert(
+        storeContextContent.includes('sessionStorage.removeItem(LOCAL_STORAGE_KEY_ACTIVE_ORDER)'),
+        'Cleanup function must remove active order from sessionStorage'
+      );
+      assert(
+        storeContextContent.includes('sessionStorage.removeItem(LOCAL_STORAGE_KEY_CUSTOMER)'),
+        'Cleanup function must remove customer details from sessionStorage'
+      );
+    });
+
+    await test('4. Backend/database order and customer records remain completely intact after completion', async () => {
+      // Create order with customer details
+      const customerPayload = {
+        name: 'Persistent Customer Record',
+        phone: '9876543210',
+        address: 'Plot 42, Gachibowli Financial District, Hyderabad',
+      };
+      const createRes = await makeRequest(server, {
+        path: '/api/orders',
+        method: 'POST',
+        body: {
+          items: [
+            {
+              menuItem: {
+                id: 'm-session-verify-1',
+                name: 'Veg Loaded Pocket Pizza',
+                price: 199,
+                category: 'pizza',
+              },
+              quantity: 1,
+              unitPrice: 199,
+              totalPrice: 199,
+            },
+          ],
+          orderType: 'delivery',
+          customer: customerPayload,
+          paymentMethod: 'cod',
+        },
+      });
+      assert.strictEqual(createRes.status, 201, 'Order creation must succeed');
+      const orderId = createRes.body.id;
+
+      // Update to delivered
+      await updateOrderStatus(orderId, 'delivered', 'Order fulfilled and delivered to doorstep');
+
+      // Fetch order from server database
+      const fetchRes = await makeRequest(server, {
+        path: `/api/orders/${encodeURIComponent(orderId)}`,
+        method: 'GET',
+      });
+      assert.strictEqual(fetchRes.status, 200, 'Delivered order must be retrievable from database');
+      assert.strictEqual(fetchRes.body.status, 'delivered', 'Order status must be delivered');
+      // Assert customer details are completely intact in PostgreSQL
+      assert.strictEqual(fetchRes.body.customer.name, 'Persistent Customer Record');
+      assert.strictEqual(fetchRes.body.customer.phone, '9876543210');
+      assert.strictEqual(fetchRes.body.customer.address, 'Plot 42, Gachibowli Financial District, Hyderabad');
+      assert.strictEqual(fetchRes.body.items.length, 1);
+      assert.strictEqual(fetchRes.body.items[0].menuItem.name, 'Veg Loaded Pocket Pizza');
+    });
+
+    await test('5. Header displays "Enter Customer Details" when no active customer details are saved', () => {
+      assert(
+        navbarContent.includes("'Enter Customer Details'"),
+        'Header component must output exact string "Enter Customer Details"'
+      );
+      assert(
+        navbarContent.includes('isCustomerVerified'),
+        'Header component must check isCustomerVerified'
+      );
+      assert(
+        navbarContent.includes('Phone className="w-3.5 h-3.5 text-emerald-600"'),
+        'Header customer details button must maintain the phone/WhatsApp icon'
+      );
+    });
+
+    await test('6. CustomerDetailsModal opens for details entry and validates Indian mobile format', () => {
+      assert(
+        customerModalContent.includes("title = 'Enter Customer Details'"),
+        'CustomerDetailsModal must default title to "Enter Customer Details"'
+      );
+      assert(
+        customerModalContent.includes('/^[6-9]\\d{9}$/'),
+        'CustomerDetailsModal must enforce Indian mobile number format (/^[6-9]\\d{9}$/)'
+      );
+      assert(
+        customerModalContent.includes('Mobile Number'),
+        'CustomerDetailsModal must use "Mobile Number" label'
+      );
+      assert(
+        customerModalContent.includes('id="customer-name-input"'),
+        'CustomerDetailsModal must include name input element'
+      );
+      assert(
+        customerModalContent.includes('id="customer-phone-input"'),
+        'CustomerDetailsModal must include phone input element'
+      );
+      assert(
+        cartDrawerContent.includes('/^[6-9]\\d{9}$/'),
+        'CartDrawer checkout validation must also enforce Indian mobile format'
+      );
+    });
+
+    await test('7. Refreshing simulation: hydration does not restore delivered order or customer details', () => {
+      assert(
+        storeContextContent.includes('isTerminalSuccessfulStatus(ord.status)'),
+        'StoreContext hydration must verify if restored order is terminal'
+      );
+      assert(
+        storeContextContent.includes('clearCompletedCustomerSession(ord.id)'),
+        'StoreContext hydration must immediately clear session if order is terminal'
+      );
+      assert(
+        !storeContextContent.includes("useState<string | null>('MOZZ-8901')"),
+        'StoreContext must not hardcode an active order ID on initial load'
+      );
+      assert(
+        !storeContextContent.includes('(orders.length > 0 ? orders[0] : null)'),
+        'StoreContext activeOrder must not fall back to arbitrary orders[0]'
+      );
+    });
+
   } finally {
     server.close();
   }

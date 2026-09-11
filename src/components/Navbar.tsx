@@ -197,19 +197,20 @@ export const Navbar: React.FC<NavbarProps> = ({
 
           {/* Right Action Bar: Dining Selector, Customer Badge, Sound, Cart */}
           <div className="flex items-center space-x-2.5">
-            {/* Customer Name & WhatsApp pill */}
+            {/* Customer Details pill */}
             <button
               onClick={() => setIsCustomerModalOpen(true)}
+              id="header-customer-details-btn"
               className={`hidden sm:flex items-center space-x-1.5 px-3 py-1.5 rounded-xl border text-xs transition ${
                 isCustomerVerified
                   ? 'bg-emerald-50 text-emerald-800 border-emerald-200 hover:bg-emerald-100'
-                  : 'bg-rose-50 text-rose-700 border-rose-200 hover:bg-rose-100'
+                  : 'bg-rose-50 text-rose-700 border-rose-200 hover:bg-rose-100 font-semibold shadow-2xs'
               }`}
-              title="Click to change Customer Name & WhatsApp Number"
+              title={isCustomerVerified ? 'Click to edit Customer Details' : 'Enter Customer Details'}
             >
               <Phone className="w-3.5 h-3.5 text-emerald-600" />
               <span className="font-bold">
-                {isCustomerVerified ? `${customerDetails.name} (+91 ${customerDetails.phone.slice(-4)})` : 'Enter WhatsApp Details'}
+                {isCustomerVerified ? `${customerDetails.name} (+91 ${customerDetails.phone.slice(-4)})` : 'Enter Customer Details'}
               </span>
             </button>
 

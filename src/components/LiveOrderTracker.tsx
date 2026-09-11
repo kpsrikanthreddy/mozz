@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useStore } from '../context/StoreContext';
-import { OrderStatus } from '../types';
+import { Order, OrderStatus } from '../types';
 import {
   MapPin,
   Clock,
@@ -78,7 +78,35 @@ export const LiveOrderTracker: React.FC<LiveOrderTrackerProps> = ({ onBackToMenu
   const [isCancelling, setIsCancelling] = useState(false);
   const [cancellationError, setCancellationError] = useState<string | null>(null);
 
-  const order = activeOrder || (activeOrderId ? orders.find((o) => o.id === activeOrderId) : orders[0]);
+  // Local session order preservation:
+  // When an order reaches terminal status (delivered/completed), the global session clears
+  // (activeOrderId -> null, customerDetails -> INITIAL_CUSTOMER, header resets to 'Enter Customer Details').
+  // sessionOrder preserves the delivered order record on this tracking screen so the customer
+  // can view the final delivery confirmation, receipt, and breakdown until navigating away.
+  const [sessionOrder, setSessionOrder] = useState<Order | null>(() => {
+    if (activeOrder) return activeOrder;
+    if (activeOrderId) return orders.find((o) => o.id === activeOrderId) || null;
+    return null;
+  });
+
+  // Keep sessionOrder updated when activeOrder is present
+  useEffect(() => {
+    if (activeOrder) {
+      setSessionOrder(activeOrder);
+    }
+  }, [activeOrder]);
+
+  // Keep sessionOrder in sync if the order is updated in the orders collection
+  useEffect(() => {
+    if (sessionOrder?.id) {
+      const updated = orders.find((o) => o.id === sessionOrder.id);
+      if (updated && updated.status !== sessionOrder.status) {
+        setSessionOrder(updated);
+      }
+    }
+  }, [orders, sessionOrder]);
+
+  const order = sessionOrder || activeOrder || (activeOrderId ? orders.find((o) => o.id === activeOrderId) : null);
 
   // Clear any previous cancellation error when viewing a different order
   useEffect(() => {
@@ -102,7 +130,10 @@ export const LiveOrderTracker: React.FC<LiveOrderTrackerProps> = ({ onBackToMenu
 
     const poll = async () => {
       try {
-        await fetchOrderById(targetId);
+        const updated = await fetchOrderById(targetId);
+        if (updated) {
+          setSessionOrder(updated);
+        }
       } catch (e) {
         console.warn('[OrderTracking] Status poll failed:', e);
       }
@@ -127,7 +158,10 @@ export const LiveOrderTracker: React.FC<LiveOrderTrackerProps> = ({ onBackToMenu
   const handleManualRefresh = async () => {
     if (!order?.id) return;
     setIsRefreshing(true);
-    await fetchOrderById(order.id);
+    const updated = await fetchOrderById(order.id);
+    if (updated) {
+      setSessionOrder(updated);
+    }
     setTimeout(() => setIsRefreshing(false), 500);
   };
 
@@ -143,11 +177,22 @@ export const LiveOrderTracker: React.FC<LiveOrderTrackerProps> = ({ onBackToMenu
     );
 
     if (matched) {
+      setSessionOrder(matched);
       setActiveOrderId(matched.id);
-      fetchOrderById(matched.id);
+      fetchOrderById(matched.id).then((ord) => {
+        if (ord) setSessionOrder(ord);
+      });
       setSearchOrderId('');
     } else {
-      alert(`Order #${query} not found. Please check the order number.`);
+      fetchOrderById(query).then((ord) => {
+        if (ord) {
+          setSessionOrder(ord);
+          setActiveOrderId(ord.id);
+          setSearchOrderId('');
+        } else {
+          alert(`Order #${query} not found. Please check the order number.`);
+        }
+      });
     }
   };
 
