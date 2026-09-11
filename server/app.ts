@@ -19,22 +19,35 @@ import { getIpHashSecret } from './config.js';
 dotenv.config();
 
 // Razorpay client configuration from environment variables
-const RAZORPAY_KEY_ID = process.env.RAZORPAY_KEY_ID || process.env.VITE_RAZORPAY_KEY_ID || '';
-const RAZORPAY_KEY_SECRET = process.env.RAZORPAY_KEY_SECRET || '';
+function getRazorpayKeyId(): string {
+  return (process.env.RAZORPAY_KEY_ID || process.env.VITE_RAZORPAY_KEY_ID || '').trim();
+}
 
-let razorpayInstance: Razorpay | null = null;
+function getRazorpayKeySecret(): string {
+  return (process.env.RAZORPAY_KEY_SECRET || '').trim();
+}
+
+export function isRazorpayConfigured(): boolean {
+  const keyId = getRazorpayKeyId();
+  const keySecret = getRazorpayKeySecret();
+  return Boolean(
+    keyId &&
+    keySecret &&
+    !keyId.toLowerCase().includes('placeholder') &&
+    !keySecret.toLowerCase().includes('placeholder')
+  );
+}
 
 function getRazorpay(): Razorpay {
-  if (!razorpayInstance) {
-    if (!RAZORPAY_KEY_ID || !RAZORPAY_KEY_SECRET) {
-      throw new Error('Razorpay credentials (RAZORPAY_KEY_ID & RAZORPAY_KEY_SECRET) must be set in environment variables.');
-    }
-    razorpayInstance = new Razorpay({
-      key_id: RAZORPAY_KEY_ID,
-      key_secret: RAZORPAY_KEY_SECRET,
-    });
+  const keyId = getRazorpayKeyId();
+  const keySecret = getRazorpayKeySecret();
+  if (!isRazorpayConfigured()) {
+    throw new Error('Online payment is temporarily unavailable. Please try again later.');
   }
-  return razorpayInstance;
+  return new Razorpay({
+    key_id: keyId,
+    key_secret: keySecret,
+  });
 }
 
 // Singleton database & admin initialization promise
@@ -1086,6 +1099,41 @@ export function createApp(): express.Application {
         return res.status(400).json({ error: 'Payment method is required' });
       }
 
+      // Production Payment Safety: For online payments (Razorpay), verify configuration and signature
+      if (paymentMethod === 'razorpay') {
+        if (!isRazorpayConfigured()) {
+          return res.status(503).json({
+            error: 'Online payment is temporarily unavailable. Please try again later.',
+            message: 'Online payment is temporarily unavailable. Please try again later.',
+          });
+        }
+
+        const razorpayOrderId = req.body.razorpay_order_id || req.body.razorpayOrderId;
+        const razorpaySignature = req.body.razorpay_signature || req.body.razorpaySignature;
+        const paymentId = req.body.paymentId || req.body.razorpay_payment_id;
+
+        if (!paymentId || !razorpayOrderId || !razorpaySignature) {
+          return res.status(400).json({
+            error: 'Online payment verification required. Missing payment ID, order ID, or signature.',
+          });
+        }
+
+        const body = `${razorpayOrderId}|${paymentId}`;
+        const expectedSignature = crypto
+          .createHmac('sha256', getRazorpayKeySecret())
+          .update(body.toString())
+          .digest('hex');
+
+        if (expectedSignature !== razorpaySignature) {
+          return res.status(400).json({
+            error: 'Invalid payment signature. Online payment verification failed.',
+          });
+        }
+
+        req.body.paymentStatus = 'paid';
+        req.body.paymentId = paymentId;
+      }
+
       // Execute full transactional order creation in PostgreSQL
       const createdOrder = await orderService.createOrder(req.body);
       res.status(201).json(createdOrder);
@@ -1157,8 +1205,16 @@ export function createApp(): express.Application {
 
   // Razorpay Gateway
   app.get('/api/razorpay/config', (_req, res) => {
+    if (!isRazorpayConfigured()) {
+      return res.status(503).json({
+        available: false,
+        error: 'Online payment is temporarily unavailable. Please try again later.',
+        message: 'Online payment is temporarily unavailable. Please try again later.',
+      });
+    }
     res.json({
-      keyId: RAZORPAY_KEY_ID,
+      available: true,
+      keyId: getRazorpayKeyId(),
       merchantName: 'MOZZ Chinese & Pizzateria',
       currency: 'INR',
     });
@@ -1166,6 +1222,14 @@ export function createApp(): express.Application {
 
   const handleCreateRazorpayOrder = async (req: express.Request, res: express.Response) => {
     try {
+      if (!isRazorpayConfigured()) {
+        return res.status(503).json({
+          success: false,
+          error: 'Online payment is temporarily unavailable. Please try again later.',
+          message: 'Online payment is temporarily unavailable. Please try again later.',
+        });
+      }
+
       const { amount, currency = 'INR', receipt, notes } = req.body;
 
       if (!amount || Number(amount) <= 0) {
@@ -1180,20 +1244,6 @@ export function createApp(): express.Application {
 
       if (amountInPaise < 100) {
         return res.status(400).json({ error: 'Minimum amount must be at least 100 paise (₹1.00)' });
-      }
-
-      if (!RAZORPAY_KEY_ID || !RAZORPAY_KEY_SECRET) {
-        const simulatedOrderId = `order_sim_${Date.now().toString(36)}`;
-        return res.json({
-          success: true,
-          order_id: simulatedOrderId,
-          orderId: simulatedOrderId,
-          amount: amountInPaise,
-          currency: currency || 'INR',
-          key_id: RAZORPAY_KEY_ID || 'rzp_test_placeholder',
-          keyId: RAZORPAY_KEY_ID || 'rzp_test_placeholder',
-          simulated: true,
-        });
       }
 
       const rzp = getRazorpay();
@@ -1213,13 +1263,15 @@ export function createApp(): express.Application {
         orderId: order.id,
         amount: order.amount,
         currency: order.currency,
-        key_id: RAZORPAY_KEY_ID,
-        keyId: RAZORPAY_KEY_ID,
+        key_id: getRazorpayKeyId(),
+        keyId: getRazorpayKeyId(),
       });
     } catch (err: any) {
       console.error('Error creating Razorpay order:', err);
-      return res.status(500).json({
-        error: 'Failed to create Razorpay order',
+      return res.status(503).json({
+        success: false,
+        error: 'Online payment is temporarily unavailable. Please try again later.',
+        message: 'Online payment is temporarily unavailable. Please try again later.',
         details: err?.message || 'Unknown error',
       });
     }
@@ -1230,6 +1282,14 @@ export function createApp(): express.Application {
 
   const handleVerifyPayment = async (req: express.Request, res: express.Response) => {
     try {
+      if (!isRazorpayConfigured()) {
+        return res.status(503).json({
+          success: false,
+          error: 'Online payment is temporarily unavailable. Please try again later.',
+          message: 'Online payment is temporarily unavailable. Please try again later.',
+        });
+      }
+
       const {
         razorpay_order_id,
         razorpay_payment_id,
@@ -1244,23 +1304,21 @@ export function createApp(): express.Application {
       const activePaymentId = razorpay_payment_id || payment_id;
       const activeSignature = razorpay_signature || signature;
 
-      if (!activeOrderId || !activePaymentId) {
+      if (!activeOrderId || !activePaymentId || !activeSignature) {
         return res.status(400).json({
           success: false,
-          error: 'Missing required payment verification parameters',
+          error: 'Missing required payment verification parameters (order_id, payment_id, signature)',
         });
       }
 
-      let isAuthentic = true;
-      if (RAZORPAY_KEY_SECRET && activeSignature) {
-        const body = `${activeOrderId}|${activePaymentId}`;
-        const expectedSignature = crypto
-          .createHmac('sha256', RAZORPAY_KEY_SECRET)
-          .update(body.toString())
-          .digest('hex');
+      const keySecret = getRazorpayKeySecret();
+      const body = `${activeOrderId}|${activePaymentId}`;
+      const expectedSignature = crypto
+        .createHmac('sha256', keySecret)
+        .update(body.toString())
+        .digest('hex');
 
-        isAuthentic = expectedSignature === activeSignature;
-      }
+      const isAuthentic = expectedSignature === activeSignature;
 
       if (isAuthentic) {
         if (app_order_id) {

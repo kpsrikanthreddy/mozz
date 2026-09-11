@@ -193,7 +193,7 @@ export async function createOrder(payload: CreateOrderPayload): Promise<Order> {
   // 2. Compute Item Total, 5% GST Tax, and Grand Total
   let calculatedItemTotal = 0;
   for (const it of payload.items) {
-    const unitPrice = Number(it.unitPrice || 0);
+    const unitPrice = Number(it.unitPrice ?? (it as any).price ?? it.menuItem?.price ?? 0);
     const qty = Math.max(1, Number(it.quantity || 1));
     calculatedItemTotal += unitPrice * qty;
   }
@@ -213,7 +213,7 @@ export async function createOrder(payload: CreateOrderPayload): Promise<Order> {
   const orderNumber = await generateOrderNumber(restaurantId);
   const kotNumber = `KOT-${orderNumber.replace(/[^0-9]/g, '') || Math.floor(1000 + Math.random() * 9000)}`;
 
-  const paymentStatus = payload.paymentStatus || (payload.paymentMethod === 'cod' ? 'cod_pending' : payload.paymentId ? 'paid' : 'pending');
+  const paymentStatus = payload.paymentStatus || (payload.paymentMethod === 'cod' ? 'cod_pending' : 'pending');
   const initialStatus: OrderStatus = 'placed';
   const initialNote = payload.orderType === 'dine_in'
     ? `Dine-In Order placed from ${payload.tableNumber || 'Table'} via QR`
@@ -348,9 +348,9 @@ export async function createOrder(payload: CreateOrderPayload): Promise<Order> {
           internalOrderId,
           restaurantId,
           resolvedMenuItemUuid,
-          item.menuItem?.name || 'Item',
+          item.menuItem?.name || (item as any).name || 'Item',
           item.quantity,
-          item.unitPrice,
+          item.unitPrice ?? (item as any).price ?? item.menuItem?.price ?? 0,
           shapeCode,
           item.selectedCrust || null,
           item.spiceLevel || null,

@@ -48,7 +48,11 @@ interface StoreContextType {
   clearQRSession: () => void;
   
   // Order actions
-  createOrder: (paymentMethod: PaymentMethod, paymentId?: string) => Promise<Order>;
+  createOrder: (
+    paymentMethod: PaymentMethod,
+    paymentId?: string,
+    razorpayMeta?: { razorpay_order_id?: string; razorpay_signature?: string }
+  ) => Promise<Order>;
   updateOrderStatus: (orderId: string, newStatus: OrderStatus, note?: string) => Promise<void>;
   updateOrderDeliveryLocation: (orderId: string, location: { latitude: number; longitude: number; address?: string }) => Promise<Order | null>;
   setActiveOrderId: (orderId: string | null) => void;
@@ -544,7 +548,11 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   // ==========================================================
   // ORDER CREATION (PostgreSQL Transaction via POST /api/orders)
   // ==========================================================
-  const createOrder = async (paymentMethod: PaymentMethod, paymentId?: string): Promise<Order> => {
+  const createOrder = async (
+    paymentMethod: PaymentMethod,
+    paymentId?: string,
+    razorpayMeta?: { razorpay_order_id?: string; razorpay_signature?: string }
+  ): Promise<Order> => {
     const payload = {
       items: cart,
       orderType,
@@ -555,7 +563,10 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         tableNumber: orderType === 'dine_in' ? (tableNumber || qrSession.tableNumber || 'Table 1') : undefined,
       },
       paymentMethod,
-      paymentId: paymentId || `pay_MOZZ_${Date.now()}`,
+      paymentId: paymentId || undefined,
+      razorpay_order_id: razorpayMeta?.razorpay_order_id,
+      razorpay_signature: razorpayMeta?.razorpay_signature,
+      paymentStatus: paymentMethod === 'cod' ? 'cod_pending' : paymentId ? 'paid' : 'pending',
       couponCode: appliedCoupon || undefined,
       discount: discountAmount,
       deliveryFee,

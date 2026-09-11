@@ -212,6 +212,35 @@ export async function createPrintJobsForOrder(
   order: Order,
   options: { reason: 'confirmed' | 'online_paid' | 'manual'; isReprint?: boolean }
 ): Promise<PrintJob[]> {
+  // Production Payment & Order Safety: Print jobs must ONLY be created for real verified paid or admin-confirmed orders
+  const isPaid = order.paymentStatus === 'paid';
+  const isConfirmed = [
+    'confirmed',
+    'accepted',
+    'baking',
+    'preparing',
+    'packing',
+    'ready',
+    'ready_for_pickup',
+    'out_for_delivery',
+    'delivered',
+    'completed',
+    'settled',
+  ].includes(order.status);
+  const isCancelledOrFailed = ['cancelled', 'rejected'].includes(order.status) || order.paymentStatus === 'failed';
+
+  if (isCancelledOrFailed && !options.isReprint) {
+    console.warn(`[PrintService] Safety refusal: Order ${order.id} is cancelled/rejected/failed. Refusing print job creation.`);
+    return [];
+  }
+
+  if (!isPaid && !isConfirmed && !options.isReprint && options.reason !== 'manual') {
+    console.warn(
+      `[PrintService] Safety refusal: Order ${order.id} is neither verified paid nor admin-confirmed (status: ${order.status}, paymentStatus: ${order.paymentStatus}). Refusing print job creation.`
+    );
+    return [];
+  }
+
   const restaurantId = order.restaurantId || (order as any).restaurant_id || 'a0000000-0000-0000-0000-000000000001';
   const branchId = order.branchId || (order as any).branch_id || 'b0000000-0000-0000-0000-000000000001';
   const info = await getRestaurantAndBranchInfo(restaurantId, branchId);
