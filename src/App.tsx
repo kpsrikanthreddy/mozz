@@ -151,7 +151,7 @@ const CustomerApp: React.FC<CustomerAppProps> = ({ currentPath, onNavigatePath }
         );
 
       case '/menu':
-        return <MenuPage routeConfig={routeConfig} />;
+        return <MenuPage routeConfig={routeConfig} currentPath={currentPath} />;
 
       case '/chinese-restaurant-gachibowli':
       case '/chinese-starters-gachibowli':
@@ -277,7 +277,7 @@ export default function App({ initialPath }: { initialPath?: string }) {
   const [currentPath, setCurrentPath] = useState(() => {
     if (initialPath) return initialPath;
     if (typeof window !== 'undefined') {
-      return window.location.pathname;
+      return window.location.pathname + window.location.search;
     }
     return '/';
   });
@@ -294,7 +294,7 @@ export default function App({ initialPath }: { initialPath?: string }) {
     if (typeof window === 'undefined') return;
 
     const handleLocationChange = () => {
-      setCurrentPath(window.location.pathname);
+      setCurrentPath(window.location.pathname + window.location.search);
       setCurrentHost(window.location.hostname);
     };
 
@@ -323,7 +323,7 @@ export default function App({ initialPath }: { initialPath?: string }) {
 
         e.preventDefault();
         window.history.pushState({}, '', href);
-        setCurrentPath(href.split('?')[0]);
+        setCurrentPath(href);
         window.scrollTo(0, 0);
       }
     };
@@ -339,7 +339,7 @@ export default function App({ initialPath }: { initialPath?: string }) {
   const navigateTo = (path: string) => {
     if (typeof window !== 'undefined') {
       window.history.pushState({}, '', path);
-      setCurrentPath(path.split('?')[0]);
+      setCurrentPath(path);
       window.scrollTo(0, 0);
     }
   };

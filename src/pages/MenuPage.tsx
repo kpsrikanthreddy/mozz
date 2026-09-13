@@ -21,18 +21,91 @@ const MENU_CATEGORIES: { id: FoodCategory; label: string }[] = [
 
 interface MenuPageProps {
   routeConfig: SeoRouteConfig;
+  currentPath?: string;
 }
 
-export const MenuPage: React.FC<MenuPageProps> = ({ routeConfig }) => {
-  const [selectedCategory, setSelectedCategory] = useState<string>('all');
+export const normalizeCategoryParam = (rawCategory: string | null | undefined): string => {
+  if (!rawCategory) return 'all';
+  const clean = decodeURIComponent(rawCategory).trim().toLowerCase().replace(/['"]/g, '');
+
+  if (
+    clean === 'chinese starters gachibowli' ||
+    clean === 'chinese-starters-gachibowli' ||
+    clean === 'chinese_starters' ||
+    clean === 'chinese-starters' ||
+    clean === 'chinese starters' ||
+    clean.includes('chinese starters') ||
+    clean.includes('chinese')
+  ) {
+    return 'chinese_starters';
+  }
+
+  if (
+    clean === 'momos gachibowli' ||
+    clean === 'momos-gachibowli' ||
+    clean === 'momos' ||
+    clean === 'momo' ||
+    clean.includes('momo')
+  ) {
+    return 'momos';
+  }
+
+  if (
+    clean === 'pocket-pizzas' ||
+    clean === 'pocket_pizzas' ||
+    clean === 'pocket pizzas' ||
+    clean.includes('pocket') ||
+    clean.includes('pizza')
+  ) {
+    return 'pocket_pizzas';
+  }
+
+  const match = MENU_CATEGORIES.find(
+    (c) => c.id.toLowerCase() === clean || c.label.toLowerCase() === clean
+  );
+  if (match) return match.id;
+
+  return 'all';
+};
+
+export const MenuPage: React.FC<MenuPageProps> = ({ routeConfig, currentPath }) => {
+  const getInitialCategory = (): string => {
+    if (typeof window === 'undefined') return 'all';
+    const query = currentPath && currentPath.includes('?')
+      ? currentPath.split('?')[1]
+      : window.location.search;
+    const params = new URLSearchParams(query);
+    const cat = params.get('category');
+    return normalizeCategoryParam(cat);
+  };
+
+  const [selectedCategory, setSelectedCategory] = useState<string>(getInitialCategory);
   const [dietaryFilter, setDietaryFilter] = useState<DietaryType | 'all'>('all');
   const [searchQuery, setSearchQuery] = useState<string>('');
+
+  // Sync category state when currentPath prop changes
+  React.useEffect(() => {
+    const query = currentPath && currentPath.includes('?')
+      ? currentPath.split('?')[1]
+      : (typeof window !== 'undefined' ? window.location.search : '');
+    const params = new URLSearchParams(query);
+    const cat = params.get('category');
+    if (cat) {
+      setSelectedCategory(normalizeCategoryParam(cat));
+    }
+  }, [currentPath]);
 
   const filteredItems = useMemo(() => {
     return INITIAL_MENU.filter((item) => {
       // Category match
-      if (selectedCategory !== 'all' && item.category !== selectedCategory) {
-        return false;
+      if (selectedCategory !== 'all') {
+        if (selectedCategory === 'pocket_pizzas') {
+          if (!item.category.includes('pocket_pizza')) {
+            return false;
+          }
+        } else if (item.category !== selectedCategory) {
+          return false;
+        }
       }
       // Dietary match
       if (dietaryFilter !== 'all' && item.dietary !== dietaryFilter) {
@@ -125,7 +198,12 @@ export const MenuPage: React.FC<MenuPageProps> = ({ routeConfig }) => {
           <div className="mt-4 flex items-center gap-1.5 overflow-x-auto pb-2 scrollbar-none">
             <button
               type="button"
-              onClick={() => setSelectedCategory('all')}
+              onClick={() => {
+                setSelectedCategory('all');
+                if (typeof window !== 'undefined' && window.history) {
+                  window.history.replaceState({}, '', '/menu');
+                }
+              }}
               className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold shrink-0 transition ${
                 selectedCategory === 'all'
                   ? 'bg-stone-900 text-white'
@@ -134,13 +212,26 @@ export const MenuPage: React.FC<MenuPageProps> = ({ routeConfig }) => {
             >
               All Categories ({INITIAL_MENU.length})
             </button>
+            {selectedCategory === 'pocket_pizzas' && (
+              <button
+                type="button"
+                className="px-3.5 py-1.5 rounded-lg text-xs font-semibold shrink-0 bg-primary-600 text-white"
+              >
+                All Pocket Pizzas ({INITIAL_MENU.filter((m) => m.category.includes('pocket_pizza')).length})
+              </button>
+            )}
             {MENU_CATEGORIES.map((cat) => {
               const count = INITIAL_MENU.filter((m) => m.category === cat.id).length;
               return (
                 <button
                   key={cat.id}
                   type="button"
-                  onClick={() => setSelectedCategory(cat.id)}
+                  onClick={() => {
+                    setSelectedCategory(cat.id);
+                    if (typeof window !== 'undefined' && window.history) {
+                      window.history.replaceState({}, '', `/menu?category=${encodeURIComponent(cat.label)}`);
+                    }
+                  }}
                   className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold shrink-0 transition ${
                     selectedCategory === cat.id
                       ? 'bg-primary-600 text-white'
