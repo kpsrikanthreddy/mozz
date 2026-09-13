@@ -1021,16 +1021,25 @@ export function createApp(): express.Application {
 
   app.patch('/api/orders/:id/location', async (req, res) => {
     try {
-      const { latitude, longitude, address } = req.body;
+      const { latitude, longitude, address, accuracy, locationCapturedAt, locationSource } = req.body;
       const lat = Number(latitude);
       const lng = Number(longitude);
       if (isNaN(lat) || isNaN(lng)) {
         return res.status(400).json({ error: 'Valid numerical latitude and longitude are required' });
       }
+      if (lat < -90 || lat > 90) {
+        return res.status(400).json({ error: 'Latitude must be between -90 and 90' });
+      }
+      if (lng < -180 || lng > 180) {
+        return res.status(400).json({ error: 'Longitude must be between -180 and 180' });
+      }
       const updated = await orderService.updateOrderCustomerLocation(req.params.id, {
         latitude: lat,
         longitude: lng,
         address: typeof address === 'string' ? address.trim() : undefined,
+        accuracy: accuracy !== undefined && accuracy !== null && !isNaN(Number(accuracy)) ? Number(accuracy) : undefined,
+        locationCapturedAt: locationCapturedAt ? String(locationCapturedAt) : undefined,
+        locationSource: locationSource || 'device_gps',
       });
       if (!updated) {
         return res.status(404).json({ error: 'Order not found' });
@@ -1097,6 +1106,29 @@ export function createApp(): express.Application {
       }
       if (!paymentMethod) {
         return res.status(400).json({ error: 'Payment method is required' });
+      }
+
+      if (orderType === 'delivery') {
+        const rawLat = req.body.customerLatitude !== undefined ? req.body.customerLatitude : customer?.latitude;
+        const rawLng = req.body.customerLongitude !== undefined ? req.body.customerLongitude : customer?.longitude;
+        const latNum = Number(rawLat);
+        const lngNum = Number(rawLng);
+
+        if (rawLat === undefined || rawLat === null || isNaN(latNum) || latNum < -90 || latNum > 90) {
+          return res.status(400).json({
+            error: 'Delivery orders require valid customer GPS coordinates. Please click "Use My Current Location" or pinpoint on map.',
+          });
+        }
+        if (rawLng === undefined || rawLng === null || isNaN(lngNum) || lngNum < -180 || lngNum > 180) {
+          return res.status(400).json({
+            error: 'Delivery orders require valid customer GPS coordinates. Please click "Use My Current Location" or pinpoint on map.',
+          });
+        }
+        if (!customer.address || !customer.address.trim()) {
+          return res.status(400).json({
+            error: 'Delivery orders require a complete delivery address.',
+          });
+        }
       }
 
       // Production Payment Safety: For online payments (Razorpay), verify configuration and signature

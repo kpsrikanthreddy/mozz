@@ -56,7 +56,7 @@ export const RazorpayCheckoutModal: React.FC<RazorpayCheckoutModalProps> = ({
   onClose,
   onOrderCompleted,
 }) => {
-  const { grandTotal, customerDetails, createOrder } = useStore();
+  const { grandTotal, customerDetails, createOrder, orderType } = useStore();
 
   const [activeTab, setActiveTab] = useState<'standard' | 'upi' | 'card' | 'netbanking' | 'cod'>('standard');
   const [isProcessing, setIsProcessing] = useState(false);
@@ -90,6 +90,14 @@ export const RazorpayCheckoutModal: React.FC<RazorpayCheckoutModalProps> = ({
   // Real Razorpay Checkout Launcher (Production Only - No Simulations)
   const launchRazorpayCheckout = async (preferredFilter?: { method?: string }) => {
     setErrorMessage('');
+
+    if (orderType === 'delivery') {
+      if (typeof customerDetails.latitude !== 'number' || typeof customerDetails.longitude !== 'number') {
+        setErrorMessage('Delivery orders require verified GPS coordinates. Please close this window and tap "Use My Current Location".');
+        return;
+      }
+    }
+
     setIsProcessing(true);
     setProcessingStep('Connecting to secure payment gateway...');
 
@@ -263,6 +271,14 @@ export const RazorpayCheckoutModal: React.FC<RazorpayCheckoutModalProps> = ({
   const handleConfirmCodOrder = async () => {
     try {
       setErrorMessage('');
+
+      if (orderType === 'delivery') {
+        if (typeof customerDetails.latitude !== 'number' || typeof customerDetails.longitude !== 'number') {
+          setErrorMessage('Delivery orders require verified GPS coordinates. Please close this window and tap "Use My Current Location".');
+          return;
+        }
+      }
+
       setIsProcessing(true);
       setProcessingStep('Confirming COD order with MOZZ Kitchen...');
 
@@ -364,7 +380,7 @@ export const RazorpayCheckoutModal: React.FC<RazorpayCheckoutModalProps> = ({
         </div>
 
         {/* Customer Notification Bar */}
-        <div className="bg-emerald-50/90 px-5 py-2 border-b border-emerald-100 flex items-center justify-between text-xs text-emerald-900">
+        <div className="bg-emerald-50/90 px-5 py-2 border-b border-emerald-100 flex flex-wrap items-center justify-between gap-1 text-xs text-emerald-900">
           <div className="flex items-center gap-2">
             <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
             <span>
@@ -372,7 +388,13 @@ export const RazorpayCheckoutModal: React.FC<RazorpayCheckoutModalProps> = ({
               <strong className="font-bold font-mono">+91 {customerDetails.phone || '8179620607'}</strong>
             </span>
           </div>
-          <span className="text-[11px] text-emerald-700 hidden sm:inline font-medium">Receipt & live status updates</span>
+          {orderType === 'delivery' && customerDetails.latitude && customerDetails.longitude ? (
+            <span className="text-[11px] text-emerald-800 font-mono bg-emerald-100/90 px-2 py-0.5 rounded border border-emerald-300">
+              📍 GPS: {customerDetails.latitude.toFixed(4)}°, {customerDetails.longitude.toFixed(4)}° (±{Math.round(customerDetails.accuracy || 15)}m)
+            </span>
+          ) : (
+            <span className="text-[11px] text-emerald-700 hidden sm:inline font-medium">Receipt & live status updates</span>
+          )}
         </div>
 
         {/* Error Notification Banner */}

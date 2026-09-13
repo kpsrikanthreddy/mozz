@@ -89,6 +89,8 @@ export interface QRSessionInfo {
 
 export type PaymentMethod = 'razorpay' | 'upi_qr' | 'gpay' | 'phonepe' | 'paytm' | 'card' | 'netbanking' | 'cod';
 
+export type CustomerLocationSource = 'device_gps' | 'map_pin' | 'saved_address';
+
 export interface CustomerDetails {
   name: string;
   phone: string;
@@ -99,6 +101,9 @@ export interface CustomerDetails {
   notes?: string;
   latitude?: number;
   longitude?: number;
+  accuracy?: number; // Accuracy in metres
+  locationCapturedAt?: string; // Capture timestamp ISO
+  locationSource?: CustomerLocationSource;
 }
 
 export interface Order {
@@ -113,6 +118,11 @@ export interface Order {
   entrySource?: EntrySource;
   qrSession?: QRSessionInfo;
   customer: CustomerDetails;
+  customerLatitude?: number;
+  customerLongitude?: number;
+  customerLocationAccuracy?: number;
+  customerLocationCapturedAt?: string;
+  customerLocationSource?: CustomerLocationSource;
   status: OrderStatus;
   paymentMethod: PaymentMethod;
   paymentStatus: 'pending' | 'paid' | 'cod_pending' | 'failed';

@@ -240,6 +240,11 @@ CREATE TABLE IF NOT EXISTS orders (
     driver_phone VARCHAR(50),
     driver_vehicle VARCHAR(100),
     customer_snapshot JSONB,
+    customer_latitude NUMERIC(10, 7),
+    customer_longitude NUMERIC(10, 7),
+    customer_location_accuracy NUMERIC(10, 2),
+    customer_location_captured_at TIMESTAMP,
+    customer_location_source VARCHAR(30),
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW(),
     CONSTRAINT unique_restaurant_order_number UNIQUE (restaurant_id, order_number)
@@ -266,6 +271,9 @@ ALTER TABLE orders ADD COLUMN IF NOT EXISTS driver_vehicle VARCHAR(100);
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS customer_snapshot JSONB;
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS customer_latitude NUMERIC(10, 7);
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS customer_longitude NUMERIC(10, 7);
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS customer_location_accuracy NUMERIC(10, 2);
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS customer_location_captured_at TIMESTAMP;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS customer_location_source VARCHAR(30);
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
 
 -- ==========================================================

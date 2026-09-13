@@ -19,8 +19,10 @@ import {
   ShieldCheck,
   QrCode,
   ExternalLink,
+  Search,
 } from 'lucide-react';
 import { OrderType } from '../types';
+import { SearchModal } from './SearchModal';
 
 interface NavbarProps {
   currentView: 'menu' | 'track' | string;
@@ -58,6 +60,26 @@ export const Navbar: React.FC<NavbarProps> = ({
   const [showOrderTypeModal, setShowOrderTypeModal] = useState(false);
   const [showQRInfoModal, setShowQRInfoModal] = useState(false);
   const [showLocationModal, setShowLocationModal] = useState(false);
+  const [isSearchModalOpen, setIsSearchModalOpen] = useState(false);
+
+  // Global keyboard shortcut (Cmd+K / Ctrl+K / slash) to open search
+  React.useEffect(() => {
+    const handleGlobalKeyDown = (e: KeyboardEvent) => {
+      // Don't trigger if user is typing in an existing input or textarea
+      const target = e.target as HTMLElement | null;
+      const isInput = target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable);
+
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        setIsSearchModalOpen((prev) => !prev);
+      } else if (e.key === '/' && !isInput) {
+        e.preventDefault();
+        setIsSearchModalOpen(true);
+      }
+    };
+    window.addEventListener('keydown', handleGlobalKeyDown);
+    return () => window.removeEventListener('keydown', handleGlobalKeyDown);
+  }, []);
 
   return (
     <header className="sticky top-0 z-40 bg-white/95 backdrop-blur-md border-b border-slate-200 text-slate-800 shadow-xs">
@@ -137,6 +159,22 @@ export const Navbar: React.FC<NavbarProps> = ({
 
           {/* Desktop Navigation Links */}
           <div className="hidden md:flex items-center space-x-2">
+            {/* 1. Search button/control in FIRST position immediately after MOZZ logo */}
+            <button
+              type="button"
+              onClick={() => setIsSearchModalOpen(true)}
+              id="navbar-search-btn"
+              className="px-3.5 py-2 rounded-xl text-sm font-bold bg-amber-400 hover:bg-amber-300 active:bg-amber-500 text-slate-950 border border-amber-500/60 shadow-xs shadow-amber-400/30 hover:shadow-sm hover:scale-[1.02] active:scale-95 transition-all duration-150 flex items-center gap-2 cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-500 focus-visible:ring-offset-2"
+              title="Search food menu (⌘K)"
+              aria-label="Search dishes and pizzas"
+            >
+              <Search className="w-4 h-4 text-slate-950 stroke-[2.5]" />
+              <span className="font-bold tracking-tight">Search</span>
+              <kbd className="hidden lg:inline-flex items-center px-1.5 py-0.5 text-[10px] font-semibold text-amber-950 bg-amber-300/80 rounded border border-amber-500/40">
+                ⌘K
+              </kbd>
+            </button>
+
             {/* Live Location Details (Before Full Menu) */}
             <button
               onClick={() => setShowLocationModal(true)}
@@ -195,8 +233,21 @@ export const Navbar: React.FC<NavbarProps> = ({
             </button>
           </div>
 
-          {/* Right Action Bar: Dining Selector, Customer Badge, Sound, Cart */}
-          <div className="flex items-center space-x-2.5">
+          {/* Right Action Bar: Search (mobile), Dining Selector, Customer Badge, Sound, Cart */}
+          <div className="flex items-center space-x-1.5 sm:space-x-2.5">
+            {/* Mobile First Visible Action: Prominent Search Button */}
+            <button
+              type="button"
+              onClick={() => setIsSearchModalOpen(true)}
+              id="navbar-mobile-search-btn"
+              className="md:hidden flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold bg-amber-400 hover:bg-amber-300 active:bg-amber-500 text-slate-950 border border-amber-500/60 shadow-xs shadow-amber-400/30 active:scale-95 transition-all min-h-[44px] shrink-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-500 focus-visible:ring-offset-2"
+              aria-label="Search dishes and pizzas"
+              title="Search dishes and pizzas"
+            >
+              <Search className="w-4 h-4 text-slate-950 stroke-[2.5] shrink-0" />
+              <span className="font-bold tracking-tight">Search</span>
+            </button>
+
             {/* Customer Details pill */}
             <button
               onClick={() => setIsCustomerModalOpen(true)}
@@ -317,6 +368,24 @@ export const Navbar: React.FC<NavbarProps> = ({
               </div>
             )}
           </div>
+
+          {/* 1. Mobile Drawer Search - First Position */}
+          <button
+            onClick={() => {
+              setIsSearchModalOpen(true);
+              setMobileMenuOpen(false);
+            }}
+            id="mobile-drawer-search-btn"
+            className="w-full text-left px-3.5 py-2.5 rounded-xl text-xs font-bold bg-amber-400 hover:bg-amber-300 active:bg-amber-500 text-slate-950 border border-amber-500/60 shadow-xs shadow-amber-400/30 flex items-center justify-between transition-all min-h-[44px]"
+          >
+            <span className="flex items-center gap-2">
+              <Search className="w-4 h-4 text-slate-950 stroke-[2.5]" />
+              <span>Search Dishes &amp; Pizzas</span>
+            </span>
+            <span className="text-[10px] px-2 py-0.5 rounded-md bg-amber-300/90 text-amber-950 font-bold uppercase tracking-wider">
+              Instant
+            </span>
+          </button>
 
           {/* Live Location Details (Before Full Menu) */}
           <button
@@ -703,6 +772,19 @@ export const Navbar: React.FC<NavbarProps> = ({
           </div>
         </div>
       )}
+
+      {/* Global Quick Search Modal */}
+      <SearchModal
+        isOpen={isSearchModalOpen}
+        onClose={() => setIsSearchModalOpen(false)}
+        onNavigateToMenu={(query) => {
+          if (query) {
+            window.location.href = `/menu?q=${encodeURIComponent(query)}`;
+          } else {
+            onNavigate('menu');
+          }
+        }}
+      />
     </header>
   );
 };

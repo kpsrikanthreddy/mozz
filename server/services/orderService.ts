@@ -1,6 +1,6 @@
 import crypto from 'crypto';
 import { query, getClient, inMemoryDb, isPostgresRunning } from '../db.js';
-import { Order, OrderStatus, OrderType, EntrySource, PaymentMethod, CartItem, CustomerDetails } from '../../src/types.js';
+import { Order, OrderStatus, OrderType, EntrySource, PaymentMethod, CartItem, CustomerDetails, CustomerLocationSource } from '../../src/types.js';
 import { findOrCreateCustomer } from './customerService.js';
 import { validateSignedToken } from './qrService.js';
 import { createPrintJobsForOrder } from './printService.js';
@@ -13,18 +13,32 @@ async function generateOrderNumber(restaurantId: string = DEFAULT_RESTAURANT_ID)
   if (isPostgresRunning()) {
     try {
       const res = await query(
-        `SELECT COUNT(*) FROM orders WHERE restaurant_id = $1`,
+        `SELECT order_number FROM orders WHERE restaurant_id = $1 AND order_number LIKE 'MOZZ-%' ORDER BY created_at DESC LIMIT 100`,
         [restaurantId]
       );
-      const count = parseInt(res.rows[0]?.count || '0', 10);
-      const nextNum = 8900 + count + 1;
-      return `MOZZ-${nextNum}`;
+      let maxNum = 8900;
+      for (const row of res.rows) {
+        const numPart = parseInt((row.order_number || '').replace('MOZZ-', ''), 10);
+        if (!isNaN(numPart) && numPart > maxNum) {
+          maxNum = numPart;
+        }
+      }
+      return `MOZZ-${maxNum + 1}`;
     } catch {
       // Fallback
     }
   }
-  const nextNum = 8900 + inMemoryDb.orders.length + 1;
-  return `MOZZ-${nextNum}`;
+  const inMemOrders = inMemoryDb.orders.filter((o) => o.restaurant_id === restaurantId);
+  let maxNum = 8900;
+  for (const row of inMemOrders) {
+    if (row.order_number && typeof row.order_number === 'string') {
+      const numPart = parseInt(row.order_number.replace('MOZZ-', ''), 10);
+      if (!isNaN(numPart) && numPart > maxNum) {
+        maxNum = numPart;
+      }
+    }
+  }
+  return `MOZZ-${maxNum + 1}`;
 }
 
 export interface CreateOrderPayload {
@@ -36,6 +50,11 @@ export interface CreateOrderPayload {
   tableId?: string;
   qrToken?: string;
   customer: CustomerDetails;
+  customerLatitude?: number;
+  customerLongitude?: number;
+  customerLocationAccuracy?: number;
+  customerLocationCapturedAt?: string;
+  customerLocationSource?: CustomerLocationSource;
   items: CartItem[];
   paymentMethod: PaymentMethod;
   paymentStatus?: 'pending' | 'paid' | 'cod_pending' | 'failed';
@@ -59,6 +78,13 @@ export async function assembleOrderObject(
   const lat = latRaw !== undefined && latRaw !== null && !isNaN(Number(latRaw)) ? Number(latRaw) : undefined;
   const lng = lngRaw !== undefined && lngRaw !== null && !isNaN(Number(lngRaw)) ? Number(lngRaw) : undefined;
 
+  const accuracyRaw = orderRow.customer_location_accuracy ?? orderRow.customer_snapshot?.accuracy ?? customerRow?.accuracy;
+  const capturedAtRaw = orderRow.customer_location_captured_at ?? orderRow.customer_snapshot?.locationCapturedAt ?? customerRow?.location_captured_at;
+  const sourceRaw = orderRow.customer_location_source ?? orderRow.customer_snapshot?.locationSource ?? customerRow?.location_source;
+  const accuracy = accuracyRaw !== undefined && accuracyRaw !== null && !isNaN(Number(accuracyRaw)) ? Number(accuracyRaw) : undefined;
+  const locationCapturedAt = capturedAtRaw ? new Date(capturedAtRaw).toISOString() : undefined;
+  const locationSource = sourceRaw || undefined;
+
   const customer: CustomerDetails = {
     name: customerRow?.name || customerRow?.cust_name || orderRow.customer_snapshot?.name || 'Guest',
     phone: customerRow?.phone || customerRow?.cust_phone || orderRow.customer_snapshot?.phone || '',
@@ -69,6 +95,9 @@ export async function assembleOrderObject(
     notes: customerRow?.notes || orderRow.customer_snapshot?.notes || undefined,
     latitude: lat,
     longitude: lng,
+    accuracy,
+    locationCapturedAt,
+    locationSource,
   };
 
   const items: CartItem[] = itemsRows.map((it) => ({
@@ -154,6 +183,11 @@ export async function assembleOrderObject(
           vehicleNumber: orderRow.driver_vehicle || '',
         }
       : undefined,
+    customerLatitude: lat,
+    customerLongitude: lng,
+    customerLocationAccuracy: accuracy,
+    customerLocationCapturedAt: locationCapturedAt,
+    customerLocationSource: locationSource,
     statusHistory,
   };
 
@@ -188,6 +222,52 @@ export async function createOrder(payload: CreateOrderPayload): Promise<Order> {
 
   if (!payload.items || payload.items.length === 0) {
     throw new Error('Cannot create order with an empty cart.');
+  }
+
+  // Strict GPS Validation for Delivery orders
+  let customerLat: number | null = null;
+  let customerLng: number | null = null;
+  let customerAccuracy: number | null = null;
+  let customerCapturedAt: string | null = null;
+  let customerSource: CustomerLocationSource | null = null;
+
+  if (payload.orderType === 'delivery') {
+    const rawLat = payload.customerLatitude !== undefined ? payload.customerLatitude : payload.customer?.latitude;
+    const rawLng = payload.customerLongitude !== undefined ? payload.customerLongitude : payload.customer?.longitude;
+    const latNum = Number(rawLat);
+    const lngNum = Number(rawLng);
+
+    if (rawLat === undefined || rawLat === null || isNaN(latNum) || latNum < -90 || latNum > 90) {
+      throw new Error('Delivery orders require valid customer delivery GPS latitude (-90 to 90).');
+    }
+    if (rawLng === undefined || rawLng === null || isNaN(lngNum) || lngNum < -180 || lngNum > 180) {
+      throw new Error('Delivery orders require valid customer delivery GPS longitude (-180 to 180).');
+    }
+
+    const addr = payload.customer?.address?.trim();
+    if (!addr) {
+      throw new Error('Delivery orders require a valid delivery address.');
+    }
+
+    customerLat = latNum;
+    customerLng = lngNum;
+
+    const rawAccuracy = payload.customerLocationAccuracy !== undefined ? payload.customerLocationAccuracy : payload.customer?.accuracy;
+    customerAccuracy = rawAccuracy !== undefined && rawAccuracy !== null && !isNaN(Number(rawAccuracy)) ? Number(rawAccuracy) : null;
+
+    const rawCapturedAt = payload.customerLocationCapturedAt || payload.customer?.locationCapturedAt;
+    customerCapturedAt = rawCapturedAt ? new Date(rawCapturedAt).toISOString() : new Date().toISOString();
+
+    const rawSource = payload.customerLocationSource || payload.customer?.locationSource;
+    const validSources = ['device_gps', 'map_pin', 'saved_address'];
+    customerSource = (validSources.includes(rawSource as string) ? rawSource : 'device_gps') as CustomerLocationSource;
+  } else {
+    // For Dine-in and Takeaway orders, customer coordinates remain null
+    customerLat = null;
+    customerLng = null;
+    customerAccuracy = null;
+    customerCapturedAt = null;
+    customerSource = null;
   }
 
   // 2. Compute Item Total, 5% GST Tax, and Grand Total
@@ -247,14 +327,18 @@ export async function createOrder(payload: CreateOrderPayload): Promise<Order> {
           payment_method, payment_status, payment_id,
           item_total, tax, delivery_fee, discount, coupon_code, grand_total,
           estimated_delivery_time_minutes, kot_number, kot_station, waiter_name,
-          customer_snapshot, customer_latitude, customer_longitude, created_at, updated_at
+          customer_snapshot, customer_latitude, customer_longitude,
+          customer_location_accuracy, customer_location_captured_at, customer_location_source,
+          created_at, updated_at
         ) VALUES (
           $1, $2, $3, $4, $5,
           $6, $7, $8, $9,
           $10, $11, $12,
           $13, $14, $15, $16, $17, $18,
           $19, $20, $21, $22,
-          $23, $24, $25, NOW(), NOW()
+          $23, $24, $25,
+          $26, $27, $28,
+          NOW(), NOW()
         ) RETURNING *;
       `;
 
@@ -288,11 +372,17 @@ export async function createOrder(payload: CreateOrderPayload): Promise<Order> {
           address: customerRecord.address,
           landmark: customerRecord.landmark,
           tableNumber: payload.tableNumber,
-          latitude: customerLat,
-          longitude: customerLng,
+          latitude: customerLat ?? undefined,
+          longitude: customerLng ?? undefined,
+          accuracy: customerAccuracy ?? undefined,
+          locationCapturedAt: customerCapturedAt ?? undefined,
+          locationSource: customerSource ?? undefined,
         }),
         customerLat,
         customerLng,
+        customerAccuracy,
+        customerCapturedAt,
+        customerSource,
       ];
 
       const orderResult = await pgClient.query(insertOrderSql, orderValues);
@@ -438,8 +528,11 @@ export async function createOrder(payload: CreateOrderPayload): Promise<Order> {
     waiter_name: payload.orderType === 'dine_in' ? 'Ramesh (Captain)' : null,
     kot_print_count: 0,
     receipt_print_count: 0,
-    customer_latitude: customerRecord.latitude ?? (typeof payload.customer?.latitude === 'number' ? payload.customer.latitude : null),
-    customer_longitude: customerRecord.longitude ?? (typeof payload.customer?.longitude === 'number' ? payload.customer.longitude : null),
+    customer_latitude: customerLat,
+    customer_longitude: customerLng,
+    customer_location_accuracy: customerAccuracy,
+    customer_location_captured_at: customerCapturedAt,
+    customer_location_source: customerSource,
     customer_snapshot: {
       name: customerRecord.name,
       phone: customerRecord.phone,
@@ -447,8 +540,11 @@ export async function createOrder(payload: CreateOrderPayload): Promise<Order> {
       address: customerRecord.address,
       landmark: customerRecord.landmark,
       tableNumber: payload.tableNumber,
-      latitude: customerRecord.latitude ?? (typeof payload.customer?.latitude === 'number' ? payload.customer.latitude : undefined),
-      longitude: customerRecord.longitude ?? (typeof payload.customer?.longitude === 'number' ? payload.customer.longitude : undefined),
+      latitude: customerLat ?? undefined,
+      longitude: customerLng ?? undefined,
+      accuracy: customerAccuracy ?? undefined,
+      locationCapturedAt: customerCapturedAt ?? undefined,
+      locationSource: customerSource ?? undefined,
     },
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
@@ -653,7 +749,14 @@ export async function getOrderById(orderIdentifier: string, restaurantId: string
 
 export async function updateOrderCustomerLocation(
   orderIdentifier: string,
-  location: { latitude: number; longitude: number; address?: string },
+  location: {
+    latitude: number;
+    longitude: number;
+    address?: string;
+    accuracy?: number;
+    locationCapturedAt?: string;
+    locationSource?: CustomerLocationSource;
+  },
   restaurantId: string = DEFAULT_RESTAURANT_ID
 ): Promise<Order | null> {
   const lat = Number(location.latitude);
@@ -662,6 +765,16 @@ export async function updateOrderCustomerLocation(
   if (isNaN(lat) || isNaN(lng)) {
     throw new Error('Valid numerical latitude and longitude are required');
   }
+  if (lat < -90 || lat > 90) {
+    throw new Error('Latitude must be between -90 and 90');
+  }
+  if (lng < -180 || lng > 180) {
+    throw new Error('Longitude must be between -180 and 180');
+  }
+
+  const accuracy = location.accuracy !== undefined && location.accuracy !== null && !isNaN(Number(location.accuracy)) ? Number(location.accuracy) : null;
+  const capturedAt = location.locationCapturedAt ? new Date(location.locationCapturedAt).toISOString() : new Date().toISOString();
+  const source = location.locationSource || 'device_gps';
 
   if (isPostgresRunning()) {
     try {
@@ -670,16 +783,22 @@ export async function updateOrderCustomerLocation(
         SET
           customer_latitude = $1,
           customer_longitude = $2,
+          customer_location_accuracy = $3,
+          customer_location_captured_at = $4,
+          customer_location_source = $5,
           customer_snapshot = COALESCE(customer_snapshot, '{}'::jsonb) || jsonb_build_object(
             'latitude', $1::numeric,
             'longitude', $2::numeric,
-            'address', COALESCE($3, customer_snapshot->>'address')
+            'accuracy', $3::numeric,
+            'locationCapturedAt', $4::text,
+            'locationSource', $5::text,
+            'address', COALESCE($6, customer_snapshot->>'address')
           ),
           updated_at = NOW()
-        WHERE (id::text = $4 OR order_number = $4) AND restaurant_id = $5
+        WHERE (id::text = $7 OR order_number = $7) AND restaurant_id = $8
         RETURNING id, customer_id;
       `;
-      const res = await query(updateSql, [lat, lng, location.address || null, orderIdentifier, restaurantId]);
+      const res = await query(updateSql, [lat, lng, accuracy, capturedAt, source, location.address || null, orderIdentifier, restaurantId]);
       if (res.rows.length > 0) {
         const row = res.rows[0];
         if (row.customer_id) {
@@ -702,10 +821,16 @@ export async function updateOrderCustomerLocation(
   if (ord) {
     ord.customer_latitude = lat;
     ord.customer_longitude = lng;
+    ord.customer_location_accuracy = accuracy;
+    ord.customer_location_captured_at = capturedAt;
+    ord.customer_location_source = source;
     ord.customer_snapshot = {
       ...(ord.customer_snapshot || {}),
       latitude: lat,
       longitude: lng,
+      accuracy: accuracy ?? undefined,
+      locationCapturedAt: capturedAt,
+      locationSource: source,
       address: location.address || ord.customer_snapshot?.address,
     };
     ord.updated_at = new Date().toISOString();

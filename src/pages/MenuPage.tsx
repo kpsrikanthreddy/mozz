@@ -79,11 +79,20 @@ export const MenuPage: React.FC<MenuPageProps> = ({ routeConfig, currentPath }) 
     return normalizeCategoryParam(cat);
   };
 
+  const getInitialSearch = () => {
+    if (typeof window === 'undefined') return '';
+    const query = currentPath && currentPath.includes('?')
+      ? currentPath.split('?')[1]
+      : window.location.search;
+    const params = new URLSearchParams(query);
+    return params.get('q') || params.get('search') || '';
+  };
+
   const [selectedCategory, setSelectedCategory] = useState<string>(getInitialCategory);
   const [dietaryFilter, setDietaryFilter] = useState<DietaryType | 'all'>('all');
-  const [searchQuery, setSearchQuery] = useState<string>('');
+  const [searchQuery, setSearchQuery] = useState<string>(getInitialSearch);
 
-  // Sync category state when currentPath prop changes
+  // Sync category and search query state when currentPath prop changes
   React.useEffect(() => {
     const query = currentPath && currentPath.includes('?')
       ? currentPath.split('?')[1]
@@ -92,6 +101,10 @@ export const MenuPage: React.FC<MenuPageProps> = ({ routeConfig, currentPath }) 
     const cat = params.get('category');
     if (cat) {
       setSelectedCategory(normalizeCategoryParam(cat));
+    }
+    const q = params.get('q') || params.get('search');
+    if (q !== null && q !== undefined) {
+      setSearchQuery(q);
     }
   }, [currentPath]);
 

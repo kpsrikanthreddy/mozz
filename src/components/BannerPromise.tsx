@@ -58,13 +58,13 @@ export const BannerPromise: React.FC<BannerPromiseProps> = ({
                 <ArrowRight className="w-4 h-4" />
               </button>
 
-              <button
-                onClick={() => onSelectCategory('chinese_starters')}
+              <a
+                href="/chinese-specials-gachibowli"
                 className="px-6 py-3.5 rounded-xl bg-gradient-to-r from-[#E1144B] to-[#EA580C] hover:from-[#D01042] hover:to-[#D94E08] text-white font-bold text-sm shadow-md shadow-rose-950/30 flex items-center gap-2 transition duration-200 cursor-pointer"
               >
                 <span>Order MOZZ Chinese Special</span>
                 <ArrowRight className="w-4 h-4" />
-              </button>
+              </a>
             </div>
           </div>
 
