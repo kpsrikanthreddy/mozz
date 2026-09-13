@@ -99,6 +99,52 @@ export const SEO_ROUTES: SeoRouteConfig[] = [
     ],
   },
 
+  // 3b. Dedicated MOZZ Chinese Specials Page
+  {
+    path: '/chinese-specials-gachibowli',
+    canonicalUrl: `${BUSINESS_INFO.domain}/chinese-specials-gachibowli`,
+    title: 'MOZZ Chinese Specials in Gachibowli | Starters4U',
+    metaDescription:
+      'Explore Chinese starters, fried rice, noodles, Maggies and momos in Gachibowli. Order authentic Indo-Chinese wok specials online from MOZZ Chinese & Pizzateria on Starters4U.',
+    h1: 'MOZZ Chinese Specials',
+    breadcrumbs: [
+      { name: 'Home', path: '/' },
+      { name: 'Chinese Specials', path: '/chinese-specials-gachibowli' },
+    ],
+    targetKeywords: [
+      'MOZZ Chinese Specials',
+      'Chinese food in Gachibowli',
+      'Indo Chinese starters Gachibowli',
+      'fried rice noodles momos Gachibowli',
+      'Order Chinese food online Gachibowli',
+    ],
+    isPublicIndexable: true,
+    changefreq: 'daily',
+    priority: 0.9,
+    faqs: [
+      {
+        question: 'What is included in MOZZ Chinese Specials?',
+        answer:
+          'MOZZ Chinese Specials brings together our complete range of Indo-Chinese favorites: wok-tossed starters, fragrant fried rice varieties, stir-fried noodles, spiced Maggies, and freshly prepared steamed or fried momos.',
+      },
+      {
+        question: 'Are veg and non-veg Chinese dishes prepared separately?',
+        answer:
+          'Yes, MOZZ Chinese & Pizzateria maintains strict kitchen segregation with dedicated cookware, oils, and preparation stations for 100% vegetarian and non-vegetarian dishes.',
+      },
+      {
+        question: 'Can I order Chinese specials for delivery or takeaway in Gachibowli?',
+        answer:
+          'Yes, you can place your order online on Starters4U for quick doorstep delivery across Gachibowli, or pick up your food fresh from our counter.',
+      },
+      {
+        question: 'Can I customize dishes with extra dips or spice toppings?',
+        answer:
+          'Yes, customize your order with extra in-house Hot Schezwan Dip, Creamy Garlic Dip, or fried noodles and extra portions directly at checkout.',
+      },
+    ],
+  },
+
   // 4. Chinese Starters in Gachibowli
   {
     path: '/chinese-starters-gachibowli',

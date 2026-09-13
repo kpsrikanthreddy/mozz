@@ -16,6 +16,7 @@ import { AboutPage } from './pages/AboutPage';
 import { ContactPage } from './pages/ContactPage';
 import { DeliveryPage } from './pages/DeliveryPage';
 import { PolicyPage } from './pages/PolicyPage';
+import { ChineseSpecialsPage } from './pages/ChineseSpecialsPage';
 import { NotFoundPage } from './pages/NotFoundPage';
 import { getRouteConfig, PUBLIC_ROUTES } from './routes';
 import { updateDocumentMetadata } from './utils/updateDocumentMetadata';
@@ -161,6 +162,9 @@ const CustomerApp: React.FC<CustomerAppProps> = ({ currentPath, onNavigatePath }
       case '/korean-pocket-pizza-hyderabad':
       case '/momos-gachibowli':
         return <CategoryPage routeConfig={routeConfig} />;
+
+      case '/chinese-specials-gachibowli':
+        return <ChineseSpecialsPage routeConfig={routeConfig} />;
 
       case '/about':
         return <AboutPage routeConfig={routeConfig} />;

@@ -96,6 +96,9 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate, onOpenShapeGuide }) 
               <a href="/menu" className="text-stone-300 hover:text-amber-400 transition">
                 Full Food Menu
               </a>
+              <a href="/chinese-specials-gachibowli" className="text-stone-300 hover:text-amber-400 transition">
+                MOZZ Chinese Specials
+              </a>
               <a href="/chinese-starters-gachibowli" className="text-stone-300 hover:text-amber-400 transition">
                 Chinese Starters in Gachibowli
               </a>
