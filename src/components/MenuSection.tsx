@@ -3,6 +3,11 @@ import { useStore } from '../context/StoreContext';
 import { FoodCategory, DietaryType, PizzaShape } from '../types';
 import { FoodCard } from './FoodCard';
 import {
+  isCategoryMatch,
+  normalizeCategorySlug,
+  getActiveCategoryTabs,
+} from '../utils/categoryUtils';
+import {
   Search,
   Sparkles,
   Flame,
@@ -13,23 +18,10 @@ import {
 } from 'lucide-react';
 
 interface MenuSectionProps {
-  selectedCategory: FoodCategory | 'all';
-  onSelectCategory: (cat: FoodCategory | 'all') => void;
+  selectedCategory: FoodCategory | 'all' | string;
+  onSelectCategory: (cat: FoodCategory | 'all' | string) => void;
   onOpenShapeGuide: () => void;
 }
-
-const CATEGORY_TABS: { id: FoodCategory | 'all'; name: string; icon: string; countBadge?: string }[] = [
-  { id: 'all', name: 'All Items', icon: '✨' },
-  { id: 'pocket_pizza_veg', name: 'Veg Pocket Pizzas', icon: '🍕', countBadge: '10' },
-  { id: 'pocket_pizza_nonveg', name: 'Non-Veg Pocket Pizzas', icon: '🍗', countBadge: '13' },
-  { id: 'dessert_pizza', name: 'Dessert Pizzas', icon: '🍫', countBadge: '3' },
-  { id: 'chinese_starters', name: 'Chinese Starters', icon: '🥟', countBadge: '10' },
-  { id: 'fried_rice', name: 'Fried Rice', icon: '🍚', countBadge: '12' },
-  { id: 'noodles', name: 'Noodles', icon: '🍜', countBadge: '7' },
-  { id: 'maggie', name: 'Maggie', icon: '🥢', countBadge: '7' },
-  { id: 'momos', name: 'Momo\'s', icon: '🥟', countBadge: '6' },
-  { id: 'drinks', name: 'Drinks', icon: '🥤', countBadge: '2' },
-];
 
 export const MenuSection: React.FC<MenuSectionProps> = ({
   selectedCategory,
@@ -42,11 +34,21 @@ export const MenuSection: React.FC<MenuSectionProps> = ({
   const [dietaryFilter, setDietaryFilter] = useState<DietaryType | 'all'>('all');
   const [onlyPocketPizzas, setOnlyPocketPizzas] = useState(false);
 
+  // Dynamic category tabs based on active menu items
+  const categoryTabs = useMemo(() => {
+    return getActiveCategoryTabs(menu, true);
+  }, [menu]);
+
   // Filtered menu logic
   const filteredMenu = useMemo(() => {
     return menu.filter((item) => {
-      // Category filter
-      if (selectedCategory !== 'all' && item.category !== selectedCategory) {
+      // Requirement 5: Only hide items when in_stock === false
+      if (item.inStock === false) {
+        return false;
+      }
+
+      // Category filter with normalized slug matching
+      if (selectedCategory !== 'all' && !isCategoryMatch(item.category, selectedCategory)) {
         return false;
       }
 
@@ -64,8 +66,8 @@ export const MenuSection: React.FC<MenuSectionProps> = ({
       if (searchQuery.trim()) {
         const query = searchQuery.toLowerCase().trim();
         const matchesName = item.name.toLowerCase().includes(query);
-        const matchesDesc = item.description.toLowerCase().includes(query);
-        const matchesCategory = item.category.toLowerCase().includes(query);
+        const matchesDesc = (item.description || '').toLowerCase().includes(query);
+        const matchesCategory = (item.category || '').toLowerCase().includes(query);
         if (!matchesName && !matchesDesc && !matchesCategory) {
           return false;
         }
@@ -80,8 +82,10 @@ export const MenuSection: React.FC<MenuSectionProps> = ({
       {/* Category Scrollable Filter Tabs */}
       <div className="bg-white/90 backdrop-blur-md p-2 rounded-2xl border border-slate-200 shadow-xs sticky top-18 z-30">
         <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-1 text-xs">
-          {CATEGORY_TABS.map((tab) => {
-            const isSelected = selectedCategory === tab.id;
+          {categoryTabs.map((tab) => {
+            const isSelected =
+              selectedCategory === tab.id ||
+              normalizeCategorySlug(selectedCategory) === normalizeCategorySlug(tab.id);
             return (
               <button
                 key={tab.id}
@@ -99,15 +103,13 @@ export const MenuSection: React.FC<MenuSectionProps> = ({
               >
                 <span>{tab.icon}</span>
                 <span>{tab.name}</span>
-                {tab.countBadge && (
-                  <span
-                    className={`text-[10px] px-1.5 py-0.2 rounded-full font-black ${
-                      isSelected ? 'bg-white/20 text-white' : 'bg-slate-200/80 text-slate-600'
-                    }`}
-                  >
-                    {tab.countBadge}
-                  </span>
-                )}
+                <span
+                  className={`text-[10px] px-1.5 py-0.2 rounded-full font-black ${
+                    isSelected ? 'bg-white/20 text-white' : 'bg-slate-200/80 text-slate-600'
+                  }`}
+                >
+                  {tab.count}
+                </span>
               </button>
             );
           })}

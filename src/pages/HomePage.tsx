@@ -1,10 +1,11 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { SeoRouteConfig } from '../types/seoTypes';
 import { Breadcrumbs } from '../components/Breadcrumbs';
 import { SeoFaqSection } from '../components/SeoFaqSection';
 import { SeoFoodGrid } from '../components/SeoFoodGrid';
 import { FoodCard } from '../components/FoodCard';
-import { INITIAL_MENU } from '../data/menuData';
+import { useStore } from '../context/StoreContext';
+import { isCategoryMatch } from '../utils/categoryUtils';
 import {
   Flame,
   ArrowRight,
@@ -21,16 +22,33 @@ interface HomePageProps {
 }
 
 export const HomePage: React.FC<HomePageProps> = ({ routeConfig, onOpenShapeGuide }) => {
-  // Select featured items from the static menu dataset
-  const featuredPocketPizzas = INITIAL_MENU.filter(
-    (item) => item.category === 'pocket_pizza_veg' || item.category === 'pocket_pizza_nonveg'
-  ).slice(0, 4);
+  const { menu } = useStore();
 
-  const featuredChineseStarters = INITIAL_MENU.filter(
-    (item) => item.category === 'chinese_starters'
-  ).slice(0, 4);
+  // Filter only in-stock items from live database menu
+  const activeMenu = useMemo(() => {
+    return menu.filter((item) => item.inStock !== false);
+  }, [menu]);
 
-  const featuredMomos = INITIAL_MENU.filter((item) => item.category === 'momos').slice(0, 4);
+  // Select featured items from the live menu dataset
+  const featuredPocketPizzas = useMemo(() => {
+    return activeMenu.filter(
+      (item) =>
+        isCategoryMatch(item.category, 'pocket_pizza_veg') ||
+        isCategoryMatch(item.category, 'pocket_pizza_nonveg')
+    ).slice(0, 4);
+  }, [activeMenu]);
+
+  const featuredChineseStarters = useMemo(() => {
+    return activeMenu.filter((item) =>
+      isCategoryMatch(item.category, 'chinese_starters')
+    ).slice(0, 4);
+  }, [activeMenu]);
+
+  const featuredMomos = useMemo(() => {
+    return activeMenu.filter((item) =>
+      isCategoryMatch(item.category, 'momos')
+    ).slice(0, 4);
+  }, [activeMenu]);
 
   return (
     <div className="min-h-screen bg-stone-50">

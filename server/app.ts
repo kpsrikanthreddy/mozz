@@ -308,11 +308,31 @@ export function createApp(): express.Application {
     }
   });
 
+  // Diagnostics endpoint for menu item exclusion tracing (Requirement 7)
+  app.get('/api/admin/menu/diagnostics', requireAuth, async (req, res) => {
+    try {
+      let restaurantId = req.user!.restaurantId || menuService.DEFAULT_RESTAURANT_ID;
+      let branchId = req.user!.branchId || menuService.DEFAULT_BRANCH_ID;
+
+      if (req.user!.role === 'SUPER_ADMIN' || req.user!.role === 'superadmin') {
+        if (req.query.restaurant_id) restaurantId = req.query.restaurant_id as string;
+        if (req.query.branch_id) branchId = req.query.branch_id as string;
+      }
+
+      const diagnostics = await menuService.getMenuDiagnostics(restaurantId, branchId);
+      res.json(diagnostics);
+    } catch (err: any) {
+      console.error('[Admin API] Error in menu diagnostics:', err);
+      res.status(500).json({ error: 'Failed to generate menu diagnostics', details: err.message });
+    }
+  });
+
   // Menu Management (Tenant Scoped)
   app.get('/api/admin/menu', requireAuth, async (req, res) => {
     try {
       const restaurantId = req.user!.restaurantId;
-      const menu = await menuService.getMenu(restaurantId);
+      const branchId = req.user!.role === 'BRANCH_MANAGER' ? req.user!.branchId : undefined;
+      const menu = await menuService.getMenu(restaurantId, branchId);
       res.json(menu);
     } catch (err: any) {
       res.status(500).json({ error: 'Failed to fetch menu items', details: err.message });
@@ -321,17 +341,29 @@ export function createApp(): express.Application {
 
   app.post('/api/admin/menu', requireAuth, requireRole(['SUPER_ADMIN', 'RESTAURANT_OWNER', 'BRANCH_MANAGER']), async (req, res) => {
     try {
-      const restaurantId = req.user!.restaurantId;
-      const branchId = req.user!.branchId;
+      // Derive restaurant_id and branch_id from authenticated session token (never trust client-supplied IDs)
+      let restaurantId = req.user!.restaurantId;
+      let branchId = req.user!.branchId;
+
+      // Only SUPER_ADMIN can target a specific restaurant if explicitly supplied
+      if ((req.user!.role === 'SUPER_ADMIN' || req.user!.role === 'superadmin') && req.body.restaurant_id) {
+        restaurantId = req.body.restaurant_id;
+        branchId = req.body.branch_id || branchId;
+      }
+
       const { name, category, dietary } = req.body;
       if (!name || !category || !dietary) {
         return res.status(400).json({ error: 'Name, category, and dietary type are required' });
       }
-      const created = await menuService.createMenuItem({
-        ...req.body,
-        restaurant_id: restaurantId,
-        branch_id: branchId,
-      });
+
+      // Strip any client-supplied restaurant_id and branch_id to prevent injection
+      const { restaurant_id: _r, branch_id: _b, ...cleanPayload } = req.body;
+
+      const created = await menuService.createMenuItem(
+        cleanPayload,
+        restaurantId,
+        branchId
+      );
       res.status(201).json(created);
     } catch (err: any) {
       res.status(500).json({ error: 'Failed to create menu item', details: err.message });
@@ -340,9 +372,17 @@ export function createApp(): express.Application {
 
   app.patch('/api/admin/menu/:id', requireAuth, requireRole(['SUPER_ADMIN', 'RESTAURANT_OWNER', 'BRANCH_MANAGER']), async (req, res) => {
     try {
-      const updated = await menuService.updateMenuItem(req.params.id, req.body);
+      let restaurantId = req.user!.restaurantId;
+      if ((req.user!.role === 'SUPER_ADMIN' || req.user!.role === 'superadmin') && req.body?.restaurant_id) {
+        restaurantId = req.body.restaurant_id;
+      }
+
+      // Strip any client-supplied restaurant_id and branch_id to prevent tampering
+      const { restaurant_id: _r, branch_id: _b, ...safeUpdates } = req.body;
+
+      const updated = await menuService.updateMenuItem(req.params.id, safeUpdates, restaurantId);
       if (!updated) {
-        return res.status(404).json({ error: 'Menu item not found' });
+        return res.status(404).json({ error: 'Menu item not found or does not belong to this restaurant' });
       }
       res.json(updated);
     } catch (err: any) {
@@ -350,12 +390,17 @@ export function createApp(): express.Application {
     }
   });
 
-  app.patch('/api/admin/menu/:id/stock', requireAuth, async (req, res) => {
+  app.patch('/api/admin/menu/:id/stock', requireAuth, requireRole(['SUPER_ADMIN', 'RESTAURANT_OWNER', 'BRANCH_MANAGER', 'CASHIER', 'KITCHEN']), async (req, res) => {
     try {
+      let restaurantId = req.user!.restaurantId;
+      if ((req.user!.role === 'SUPER_ADMIN' || req.user!.role === 'superadmin') && req.body?.restaurant_id) {
+        restaurantId = req.body.restaurant_id;
+      }
+
       const explicitInStock = typeof req.body?.inStock === 'boolean' ? req.body.inStock : undefined;
-      const updated = await menuService.toggleStock(req.params.id, explicitInStock);
+      const updated = await menuService.toggleStock(req.params.id, explicitInStock, restaurantId);
       if (!updated) {
-        return res.status(404).json({ error: 'Menu item not found' });
+        return res.status(404).json({ error: 'Menu item not found or does not belong to this restaurant' });
       }
       res.json(updated);
     } catch (err: any) {
@@ -363,11 +408,16 @@ export function createApp(): express.Application {
     }
   });
 
-  app.delete('/api/admin/menu/:id', requireAuth, requireRole(['SUPER_ADMIN', 'RESTAURANT_OWNER']), async (req, res) => {
+  app.delete('/api/admin/menu/:id', requireAuth, requireRole(['SUPER_ADMIN', 'RESTAURANT_OWNER', 'BRANCH_MANAGER']), async (req, res) => {
     try {
-      const success = await menuService.deleteMenuItem(req.params.id);
+      let restaurantId = req.user!.restaurantId;
+      if ((req.user!.role === 'SUPER_ADMIN' || req.user!.role === 'superadmin') && req.query?.restaurant_id) {
+        restaurantId = req.query.restaurant_id as string;
+      }
+
+      const success = await menuService.deleteMenuItem(req.params.id, restaurantId);
       if (!success) {
-        return res.status(404).json({ error: 'Item not found' });
+        return res.status(404).json({ error: 'Item not found or does not belong to this restaurant' });
       }
       res.json({ success: true, message: 'Item deleted successfully' });
     } catch (err: any) {
@@ -378,7 +428,8 @@ export function createApp(): express.Application {
   app.post('/api/admin/menu/reset', requireAuth, requireRole(['SUPER_ADMIN', 'RESTAURANT_OWNER']), async (req, res) => {
     try {
       const restaurantId = req.user!.restaurantId;
-      const resetMenu = await menuService.resetMenuToDefault(restaurantId);
+      const branchId = req.user!.branchId;
+      const resetMenu = await menuService.resetMenuToDefault(restaurantId, branchId);
       res.json({ success: true, message: 'Menu reset to default recipe set', menu: resetMenu });
     } catch (err: any) {
       res.status(500).json({ error: 'Failed to reset menu', details: err.message });
@@ -970,12 +1021,81 @@ export function createApp(): express.Application {
 
   // ==========================================================
   // 4. PUBLIC CUSTOMER APIS (Customer Website & Online Ordering)
+  // Read-only customer endpoints: Non-GET requests are strictly rejected
   // ==========================================================
+  app.all('/api/menu', (req, res, next) => {
+    if (req.method !== 'GET') {
+      return res.status(405).json({
+        error: 'Method Not Allowed',
+        message: 'The /api/menu customer endpoint is read-only. Menu mutations require authenticated admin access at /api/admin/menu.',
+      });
+    }
+    next();
+  });
+
+  app.all('/api/menu/*', (req, res, next) => {
+    if (req.method !== 'GET') {
+      return res.status(405).json({
+        error: 'Method Not Allowed',
+        message: 'The /api/menu endpoint is read-only. Menu mutations require authenticated admin access at /api/admin/menu.',
+      });
+    }
+    next();
+  });
+
   app.get('/api/menu', async (req, res) => {
     try {
-      const restaurantId = (req.query.restaurant_id as string) || undefined;
-      const branchId = (req.query.branch_id as string) || undefined;
-      const menu = await menuService.getMenu(restaurantId, branchId);
+      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+      res.setHeader('Pragma', 'no-cache');
+      res.setHeader('Expires', '0');
+
+      let restaurantId = (req.query.restaurant_id as string) || (req.query.restaurantId as string) || (req.headers['x-restaurant-id'] as string);
+      let branchId = (req.query.branch_id as string) || (req.query.branchId as string) || (req.headers['x-branch-id'] as string);
+      const restaurantSlug = (req.query.restaurant as string) || (req.query.slug as string);
+      const branchSlug = (req.query.branch as string) || (req.query.branch_slug as string);
+      const onlyInStock = req.query.in_stock === 'true' || req.query.available_only === 'true';
+
+      if (!restaurantId && restaurantSlug) {
+        if (isPostgresRunning()) {
+          try {
+            const found = await query('SELECT id FROM restaurants WHERE slug = $1 LIMIT 1', [restaurantSlug.toLowerCase()]);
+            if (found.rows.length > 0) {
+              restaurantId = found.rows[0].id;
+            }
+          } catch (e) {
+            // fallback
+          }
+        }
+        if (!restaurantId) {
+          const inMem = inMemoryDb.restaurants.find((r) => r.slug === restaurantSlug.toLowerCase());
+          if (inMem) restaurantId = inMem.id;
+        }
+      }
+
+      if (!restaurantId) {
+        restaurantId = menuService.DEFAULT_RESTAURANT_ID;
+      }
+
+      // If branchSlug is provided, resolve it
+      if (!branchId && branchSlug) {
+        if (isPostgresRunning()) {
+          try {
+            const bFound = await query('SELECT id FROM branches WHERE restaurant_id = $1 AND slug = $2 LIMIT 1', [restaurantId, branchSlug.toLowerCase()]);
+            if (bFound.rows.length > 0) {
+              branchId = bFound.rows[0].id;
+            }
+          } catch (e) {
+            // fallback
+          }
+        }
+      }
+
+      // Default to active default branch if not specified and not explicitly requesting all branches
+      if (!branchId && req.query.all_branches !== 'true' && req.query.branch_id !== 'all') {
+        branchId = menuService.DEFAULT_BRANCH_ID;
+      }
+
+      const menu = await menuService.getMenu(restaurantId, branchId, onlyInStock);
       res.json(menu);
     } catch (err: any) {
       console.error('Error fetching menu:', err);
@@ -985,7 +1105,8 @@ export function createApp(): express.Application {
 
   app.get('/api/menu/:id', async (req, res) => {
     try {
-      const item = await menuService.getMenuItem(req.params.id);
+      const restaurantId = (req.query.restaurant_id as string) || (req.query.restaurantId as string) || 'a0000000-0000-0000-0000-000000000001';
+      const item = await menuService.getMenuItem(req.params.id, restaurantId);
       if (!item) {
         return res.status(404).json({ error: 'Menu item not found' });
       }

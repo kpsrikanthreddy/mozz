@@ -63,6 +63,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ onBackToMenu }) => {
   const {
     orders: contextOrders,
     menu,
+    refreshMenu,
     isAdminAuthenticated,
     loginAdmin,
     logoutAdmin,
@@ -84,6 +85,13 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ onBackToMenu }) => {
   const [adminOrders, setAdminOrders] = useState<Order[]>([]);
   const [isLoadingOrders, setIsLoadingOrders] = useState<boolean>(false);
   const [statusUpdateError, setStatusUpdateError] = useState<string | null>(null);
+
+  // Authenticated Admin Menu State
+  const [adminMenu, setAdminMenu] = useState<MenuItem[]>([]);
+  const [isLoadingAdminMenu, setIsLoadingAdminMenu] = useState<boolean>(false);
+  const [menuFeedback, setMenuFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const [isSubmittingItem, setIsSubmittingItem] = useState<boolean>(false);
+  const [modalError, setModalError] = useState<string | null>(null);
 
   const isAuthorized = isAdminAuthenticated || isAuthFromContext;
 
@@ -107,13 +115,35 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ onBackToMenu }) => {
     }
   }, [isAuthorized, adminFetch]);
 
+  const fetchAdminMenu = useCallback(async () => {
+    if (!isAuthorized) return;
+    try {
+      setIsLoadingAdminMenu(true);
+      const res = await adminFetch(`/api/admin/menu?_t=${Date.now()}`);
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data)) {
+          setAdminMenu(data);
+        }
+      } else {
+        const errData = await res.json().catch(() => ({}));
+        console.warn('[AdminPortal] Could not load admin menu:', errData.error || res.statusText);
+      }
+    } catch (err) {
+      console.error('[AdminPortal] Error loading admin menu:', err);
+    } finally {
+      setIsLoadingAdminMenu(false);
+    }
+  }, [isAuthorized, adminFetch]);
+
   useEffect(() => {
     if (isAuthorized) {
       fetchAdminOrders();
+      fetchAdminMenu();
       const interval = setInterval(fetchAdminOrders, 5000);
       return () => clearInterval(interval);
     }
-  }, [isAuthorized, fetchAdminOrders]);
+  }, [isAuthorized, fetchAdminOrders, fetchAdminMenu]);
 
   const handleAdminUpdateOrderStatus = async (orderId: string, newStatus: OrderStatus, note?: string) => {
     try {
@@ -314,6 +344,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ onBackToMenu }) => {
 
   const openAddItemModal = () => {
     setEditingItem(null);
+    setModalError(null);
     setFormData({
       name: '',
       category: 'pocket_pizza_veg',
@@ -333,6 +364,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ onBackToMenu }) => {
 
   const openEditItemModal = (item: MenuItem) => {
     setEditingItem(item);
+    setModalError(null);
     setFormData({
       name: item.name,
       category: item.category,
@@ -345,14 +377,18 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ onBackToMenu }) => {
       priceS: item.prices?.S || 179,
       image: item.image || '',
       badge: item.badge || '',
-      inStock: item.inStock,
+      inStock: item.inStock !== false,
     });
     setIsItemModalOpen(true);
   };
 
-  const handleSaveItem = (e: React.FormEvent) => {
+  const handleSaveItem = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!formData.name.trim()) return;
+
+    setIsSubmittingItem(true);
+    setModalError(null);
+    setMenuFeedback(null);
 
     const itemPayload: any = {
       name: formData.name.trim(),
@@ -375,17 +411,117 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ onBackToMenu }) => {
       itemPayload.price = Number(formData.price) || 99;
     }
 
-    if (editingItem) {
-      updateMenuItem(editingItem.id, itemPayload);
-    } else {
-      addMenuItem(itemPayload);
+    try {
+      if (editingItem) {
+        const res = await adminFetch(`/api/admin/menu/${encodeURIComponent(editingItem.id)}`, {
+          method: 'PATCH',
+          body: JSON.stringify(itemPayload),
+        });
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({}));
+          throw new Error(errData.error || errData.details || `Failed to update menu item (${res.status})`);
+        }
+        setMenuFeedback({ type: 'success', message: `Updated "${itemPayload.name}" successfully!` });
+        soundService.playChime('success');
+      } else {
+        const res = await adminFetch('/api/admin/menu', {
+          method: 'POST',
+          body: JSON.stringify(itemPayload),
+        });
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({}));
+          throw new Error(errData.error || errData.details || `Failed to create menu item (${res.status})`);
+        }
+        setMenuFeedback({ type: 'success', message: `Added "${itemPayload.name}" to menu successfully!` });
+        soundService.playChime('success');
+      }
+
+      setIsItemModalOpen(false);
+      await fetchAdminMenu();
+      await refreshMenu();
+    } catch (err: any) {
+      console.error('[AdminPortal] Error saving menu item:', err);
+      setModalError(err.message || 'Failed to save menu item');
+      setMenuFeedback({ type: 'error', message: err.message || 'Failed to save menu item' });
+    } finally {
+      setIsSubmittingItem(false);
     }
-    setIsItemModalOpen(false);
   };
 
-  const handleDeleteItem = (itemId: string, itemName: string) => {
-    if (window.confirm(`Are you sure you want to delete "${itemName}" from the menu?`)) {
-      deleteMenuItem(itemId);
+  const handleDeleteItem = async (itemId: string, itemName: string) => {
+    if (!window.confirm(`Are you sure you want to delete "${itemName}" from the menu?`)) {
+      return;
+    }
+    try {
+      setMenuFeedback(null);
+      const res = await adminFetch(`/api/admin/menu/${encodeURIComponent(itemId)}`, {
+        method: 'DELETE',
+      });
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.error || errData.details || `Failed to delete item (${res.status})`);
+      }
+      setMenuFeedback({ type: 'success', message: `Deleted "${itemName}" from menu successfully.` });
+      soundService.playChime('notification');
+      await fetchAdminMenu();
+      await refreshMenu();
+    } catch (err: any) {
+      console.error('[AdminPortal] Error deleting menu item:', err);
+      setMenuFeedback({ type: 'error', message: err.message || 'Failed to delete menu item' });
+    }
+  };
+
+  const handleToggleAdminStock = async (item: MenuItem) => {
+    const nextStock = !item.inStock;
+    // Optimistic UI toggle in adminMenu
+    setAdminMenu((prev) =>
+      prev.map((m) => (m.id === item.id ? { ...m, inStock: nextStock } : m))
+    );
+
+    try {
+      setMenuFeedback(null);
+      const res = await adminFetch(`/api/admin/menu/${encodeURIComponent(item.id)}/stock`, {
+        method: 'PATCH',
+        body: JSON.stringify({ inStock: nextStock }),
+      });
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.error || errData.details || 'Failed to update stock status');
+      }
+      setMenuFeedback({
+        type: 'success',
+        message: `Marked "${item.name}" as ${nextStock ? 'In Stock' : 'Sold Out'}.`,
+      });
+      await fetchAdminMenu();
+      await refreshMenu();
+    } catch (err: any) {
+      console.error('[AdminPortal] Error updating stock:', err);
+      setMenuFeedback({ type: 'error', message: err.message || 'Failed to toggle stock status' });
+      await fetchAdminMenu();
+      await refreshMenu();
+    }
+  };
+
+  const handleResetAdminMenu = async () => {
+    if (!window.confirm('Reset all menu items to the default MOZZ recipe set? Any custom dishes will be replaced.')) {
+      return;
+    }
+    try {
+      setMenuFeedback(null);
+      const res = await adminFetch('/api/admin/menu/reset', {
+        method: 'POST',
+      });
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.error || errData.details || 'Failed to reset menu');
+      }
+      setMenuFeedback({ type: 'success', message: 'Menu successfully reset to default recipe set.' });
+      soundService.playChime('notification');
+      await fetchAdminMenu();
+      await refreshMenu();
+    } catch (err: any) {
+      console.error('[AdminPortal] Error resetting menu:', err);
+      setMenuFeedback({ type: 'error', message: err.message || 'Failed to reset menu' });
     }
   };
 
@@ -976,6 +1112,19 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ onBackToMenu }) => {
                 <span>Add New Item</span>
               </button>
 
+              <button
+                onClick={() => {
+                  fetchAdminMenu();
+                  refreshMenu();
+                }}
+                disabled={isLoadingAdminMenu}
+                className="px-3 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold border border-slate-200 transition flex items-center gap-1"
+                title="Refresh Menu from Database"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${isLoadingAdminMenu ? 'animate-spin' : ''}`} />
+                <span className="hidden sm:inline">Refresh</span>
+              </button>
+
               <input
                 type="text"
                 value={menuSearch}
@@ -985,7 +1134,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ onBackToMenu }) => {
               />
 
               <button
-                onClick={resetMenuToDefault}
+                onClick={handleResetAdminMenu}
                 className="px-3 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold border border-slate-200 transition flex items-center gap-1"
                 title="Reset prices & items to original menu card"
               >
@@ -994,6 +1143,32 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ onBackToMenu }) => {
               </button>
             </div>
           </div>
+
+          {/* Feedback banner */}
+          {menuFeedback && (
+            <div
+              className={`p-3 rounded-2xl border flex items-center justify-between text-xs font-semibold ${
+                menuFeedback.type === 'success'
+                  ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                  : 'bg-rose-50 text-rose-800 border-rose-200'
+              }`}
+            >
+              <div className="flex items-center gap-2">
+                {menuFeedback.type === 'success' ? (
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                ) : (
+                  <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
+                )}
+                <span>{menuFeedback.message}</span>
+              </div>
+              <button
+                onClick={() => setMenuFeedback(null)}
+                className="text-slate-400 hover:text-slate-600 p-1"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          )}
 
           <div className="overflow-x-auto">
             <table className="w-full text-left text-xs border-collapse">
@@ -1008,7 +1183,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ onBackToMenu }) => {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {menu
+                {(adminMenu.length > 0 ? adminMenu : menu)
                   .filter((m) => m.name.toLowerCase().includes(menuSearch.toLowerCase()))
                   .map((item) => (
                     <tr key={item.id} className="hover:bg-slate-50/70 transition">
@@ -1072,7 +1247,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ onBackToMenu }) => {
                       </td>
                       <td className="py-3 px-3">
                         <button
-                          onClick={() => toggleItemStock(item.id)}
+                          onClick={() => handleToggleAdminStock(item)}
                           className={`px-2.5 py-1 rounded-xl text-xs font-bold transition ${
                             item.inStock
                               ? 'bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100'
@@ -1135,6 +1310,13 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ onBackToMenu }) => {
 
             {/* Form Body */}
             <form onSubmit={handleSaveItem} className="p-5 space-y-4 overflow-y-auto flex-1 text-xs">
+              {modalError && (
+                <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs flex items-center gap-2">
+                  <AlertTriangle className="w-4 h-4 shrink-0 text-rose-600" />
+                  <span>{modalError}</span>
+                </div>
+              )}
+
               <div>
                 <label className="block font-bold text-slate-700 mb-1">Item / Dish Name *</label>
                 <input
@@ -1288,9 +1470,17 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ onBackToMenu }) => {
               <div className="pt-2">
                 <button
                   type="submit"
-                  className="w-full py-2.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-bold shadow-xs transition text-xs"
+                  disabled={isSubmittingItem}
+                  className="w-full py-2.5 rounded-xl bg-rose-600 hover:bg-rose-700 disabled:opacity-50 text-white font-bold shadow-xs transition text-xs flex items-center justify-center gap-2"
                 >
-                  {editingItem ? 'Save Item Changes' : 'Add Item to Menu'}
+                  {isSubmittingItem ? (
+                    <>
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                      <span>Saving...</span>
+                    </>
+                  ) : (
+                    editingItem ? 'Save Item Changes' : 'Add Item to Menu'
+                  )}
                 </button>
               </div>
             </form>

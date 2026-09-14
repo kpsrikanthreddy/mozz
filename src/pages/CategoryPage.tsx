@@ -3,8 +3,9 @@ import { SeoRouteConfig } from '../types/seoTypes';
 import { Breadcrumbs } from '../components/Breadcrumbs';
 import { SeoFaqSection } from '../components/SeoFaqSection';
 import { SeoFoodGrid } from '../components/SeoFoodGrid';
-import { INITIAL_MENU } from '../data/menuData';
+import { useStore } from '../context/StoreContext';
 import { MenuItem } from '../types';
+import { isCategoryMatch } from '../utils/categoryUtils';
 import {
   Utensils,
   Flame,
@@ -20,9 +21,13 @@ interface CategoryPageProps {
 }
 
 export const CategoryPage: React.FC<CategoryPageProps> = ({ routeConfig }) => {
+  const { menu } = useStore();
   const path = routeConfig.path;
 
   // Filter items specifically based on the current landing route
+  // Only include items where inStock !== false
+  const activeMenu = menu.filter((m) => m.inStock !== false);
+
   let primaryItems: MenuItem[] = [];
   let secondaryItems: MenuItem[] = [];
   let editorialContent: {
@@ -34,11 +39,11 @@ export const CategoryPage: React.FC<CategoryPageProps> = ({ routeConfig }) => {
 
   switch (path) {
     case '/chinese-restaurant-gachibowli':
-      primaryItems = INITIAL_MENU.filter(
+      primaryItems = activeMenu.filter(
         (m) =>
-          m.category === 'chinese_starters' ||
-          m.category === 'fried_rice' ||
-          m.category === 'noodles'
+          isCategoryMatch(m.category, 'chinese_starters') ||
+          isCategoryMatch(m.category, 'fried_rice') ||
+          isCategoryMatch(m.category, 'noodles')
       );
       editorialContent = {
         badge: 'Indo-Chinese Kitchen',
@@ -68,8 +73,8 @@ export const CategoryPage: React.FC<CategoryPageProps> = ({ routeConfig }) => {
       break;
 
     case '/chinese-starters-gachibowli':
-      primaryItems = INITIAL_MENU.filter(
-        (m) => m.category === 'chinese_starters'
+      primaryItems = activeMenu.filter(
+        (m) => isCategoryMatch(m.category, 'chinese_starters')
       );
       editorialContent = {
         badge: 'Wok-Tossed Appetizers',
@@ -99,7 +104,9 @@ export const CategoryPage: React.FC<CategoryPageProps> = ({ routeConfig }) => {
       break;
 
     case '/veg-starters-gachibowli':
-      primaryItems = INITIAL_MENU.filter((m) => m.category === 'chinese_starters' && m.dietary === 'veg');
+      primaryItems = activeMenu.filter(
+        (m) => isCategoryMatch(m.category, 'chinese_starters') && m.dietary === 'veg'
+      );
       editorialContent = {
         badge: '100% Vegetarian Starters',
         leadText:
@@ -128,7 +135,9 @@ export const CategoryPage: React.FC<CategoryPageProps> = ({ routeConfig }) => {
       break;
 
     case '/non-veg-starters-gachibowli':
-      primaryItems = INITIAL_MENU.filter((m) => m.category === 'chinese_starters' && m.dietary === 'non-veg');
+      primaryItems = activeMenu.filter(
+        (m) => isCategoryMatch(m.category, 'chinese_starters') && m.dietary === 'non-veg'
+      );
       editorialContent = {
         badge: 'Chicken Starters Selection',
         leadText:
@@ -157,8 +166,8 @@ export const CategoryPage: React.FC<CategoryPageProps> = ({ routeConfig }) => {
       break;
 
     case '/pizza-gachibowli':
-      primaryItems = INITIAL_MENU.filter(
-        (m) => m.category === 'pocket_pizza_veg' || m.category === 'pocket_pizza_nonveg'
+      primaryItems = activeMenu.filter(
+        (m) => isCategoryMatch(m.category, 'pocket_pizza_veg') || isCategoryMatch(m.category, 'pocket_pizza_nonveg')
       );
       editorialContent = {
         badge: 'Korean Pocket Pizzas',
@@ -188,10 +197,10 @@ export const CategoryPage: React.FC<CategoryPageProps> = ({ routeConfig }) => {
       break;
 
     case '/korean-pocket-pizza-hyderabad':
-      primaryItems = INITIAL_MENU.filter(
-        (m) => m.category === 'pocket_pizza_veg' || m.category === 'pocket_pizza_nonveg'
+      primaryItems = activeMenu.filter(
+        (m) => isCategoryMatch(m.category, 'pocket_pizza_veg') || isCategoryMatch(m.category, 'pocket_pizza_nonveg')
       );
-      secondaryItems = INITIAL_MENU.filter((m) => m.category === 'dessert_pizza');
+      secondaryItems = activeMenu.filter((m) => isCategoryMatch(m.category, 'dessert_pizza'));
       editorialContent = {
         badge: 'Handheld Pizza Innovation',
         leadText:
@@ -221,7 +230,7 @@ export const CategoryPage: React.FC<CategoryPageProps> = ({ routeConfig }) => {
 
     case '/momos-gachibowli':
     default:
-      primaryItems = INITIAL_MENU.filter((m) => m.category === 'momos');
+      primaryItems = activeMenu.filter((m) => isCategoryMatch(m.category, 'momos'));
       editorialContent = {
         badge: 'Himalayan Dumplings',
         leadText:

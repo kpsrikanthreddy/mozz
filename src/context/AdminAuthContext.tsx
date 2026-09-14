@@ -62,8 +62,10 @@ export const AdminAuthProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const adminFetch = useCallback(
     async (input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> => {
       const headers = new Headers(init.headers || {});
-      if (token) {
-        headers.set('Authorization', `Bearer ${token}`);
+      const activeToken =
+        token || (typeof window !== 'undefined' ? localStorage.getItem(LOCAL_STORAGE_TOKEN_KEY) : null);
+      if (activeToken) {
+        headers.set('Authorization', `Bearer ${activeToken}`);
       }
       if (!headers.has('Content-Type') && !(init.body instanceof FormData)) {
         headers.set('Content-Type', 'application/json');

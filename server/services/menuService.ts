@@ -3,8 +3,8 @@ import { MenuItem } from '../../src/types.js';
 import { INITIAL_MENU } from '../../src/data/menuData.js';
 import crypto from 'crypto';
 
-const DEFAULT_RESTAURANT_ID = 'a0000000-0000-0000-0000-000000000001';
-const DEFAULT_BRANCH_ID = 'b0000000-0000-0000-0000-000000000001';
+export const DEFAULT_RESTAURANT_ID = 'a0000000-0000-0000-0000-000000000001';
+export const DEFAULT_BRANCH_ID = 'b0000000-0000-0000-0000-000000000001';
 
 // Helper to map DB row to frontend MenuItem
 export function mapRowToMenuItem(row: any): MenuItem {
@@ -39,13 +39,28 @@ export function mapRowToMenuItem(row: any): MenuItem {
   return item;
 }
 
-export async function getMenu(restaurantId: string = DEFAULT_RESTAURANT_ID, branchId?: string): Promise<MenuItem[]> {
+export async function getMenu(
+  restaurantId: string = DEFAULT_RESTAURANT_ID,
+  branchId?: string,
+  onlyInStock: boolean = false
+): Promise<MenuItem[]> {
   if (isPostgresRunning()) {
     try {
-      const sql = branchId
-        ? `SELECT * FROM menu_items WHERE restaurant_id = $1 AND (branch_id = $2 OR branch_id IS NULL) ORDER BY category, item_code, name`
-        : `SELECT * FROM menu_items WHERE restaurant_id = $1 ORDER BY category, item_code, name`;
-      const params = branchId ? [restaurantId, branchId] : [restaurantId];
+      let sql: string;
+      let params: any[];
+
+      if (branchId && branchId !== 'all') {
+        sql = onlyInStock
+          ? `SELECT * FROM menu_items WHERE restaurant_id = $1 AND (branch_id = $2 OR branch_id IS NULL) AND in_stock = true ORDER BY category, item_code, name`
+          : `SELECT * FROM menu_items WHERE restaurant_id = $1 AND (branch_id = $2 OR branch_id IS NULL) ORDER BY category, item_code, name`;
+        params = [restaurantId, branchId];
+      } else {
+        sql = onlyInStock
+          ? `SELECT * FROM menu_items WHERE restaurant_id = $1 AND in_stock = true ORDER BY category, item_code, name`
+          : `SELECT * FROM menu_items WHERE restaurant_id = $1 ORDER BY category, item_code, name`;
+        params = [restaurantId];
+      }
+
       const res = await query(sql, params);
       return res.rows.map(mapRowToMenuItem);
     } catch (err) {
@@ -55,9 +70,116 @@ export async function getMenu(restaurantId: string = DEFAULT_RESTAURANT_ID, bran
 
   // In-Memory Fallback
   const items = inMemoryDb.menu_items.filter(
-    (item) => item.restaurant_id === restaurantId && (!branchId || item.branch_id === branchId || !item.branch_id)
+    (item) =>
+      item.restaurant_id === restaurantId &&
+      (!branchId || branchId === 'all' || item.branch_id === branchId || !item.branch_id) &&
+      (!onlyInStock || item.in_stock !== false)
   );
   return items.map(mapRowToMenuItem);
+}
+
+export interface MenuDiagnosticResult {
+  diagnostic: boolean;
+  resolvedRestaurantId: string;
+  resolvedBranchId: string;
+  totalRestaurantItems: number;
+  visibleForBranch?: number;
+  availableForCustomer?: number;
+  returnedCount: number;
+  excludedCount: number;
+  allCategories?: string[];
+  excludedItems: Array<{
+    id: string;
+    itemCode?: string;
+    name: string;
+    category: string;
+    branchId: string | null;
+    inStock: boolean;
+    reason: string;
+  }>;
+  categoriesSummary: Record<string, number>;
+}
+
+export async function getMenuDiagnostics(
+  restaurantId: string = DEFAULT_RESTAURANT_ID,
+  branchId: string = DEFAULT_BRANCH_ID
+): Promise<MenuDiagnosticResult> {
+  let allRows: any[] = [];
+  if (isPostgresRunning()) {
+    try {
+      const res = await query(
+        `SELECT * FROM menu_items WHERE restaurant_id = $1 ORDER BY category, item_code, name`,
+        [restaurantId]
+      );
+      allRows = res.rows;
+    } catch (e) {
+      console.error('[MenuService] Error fetching all items for diagnostics:', e);
+    }
+  } else {
+    allRows = inMemoryDb.menu_items.filter((item) => item.restaurant_id === restaurantId);
+  }
+
+  const returnedItems: any[] = [];
+  const excludedItems: Array<{
+    id: string;
+    itemCode?: string;
+    name: string;
+    category: string;
+    branchId: string | null;
+    inStock: boolean;
+    reason: string;
+  }> = [];
+
+  const categoriesSummary: Record<string, number> = {};
+
+  for (const row of allRows) {
+    const itemBranchId = row.branch_id;
+    const inStock = Boolean(row.in_stock);
+    const branchMatch = !itemBranchId || itemBranchId === branchId;
+
+    if (!branchMatch) {
+      excludedItems.push({
+        id: row.id,
+        itemCode: row.item_code,
+        name: row.name,
+        category: row.category,
+        branchId: itemBranchId,
+        inStock,
+        reason: `Branch mismatch: Item belongs to branch ${itemBranchId}, but requested branch is ${branchId}`,
+      });
+    } else if (!inStock) {
+      excludedItems.push({
+        id: row.id,
+        itemCode: row.item_code,
+        name: row.name,
+        category: row.category,
+        branchId: itemBranchId,
+        inStock,
+        reason: 'Out of stock: in_stock flag is false (hidden from public customer menu view)',
+      });
+      returnedItems.push(row);
+    } else {
+      returnedItems.push(row);
+      categoriesSummary[row.category] = (categoriesSummary[row.category] || 0) + 1;
+    }
+  }
+
+  const allCategories = Array.from(new Set(allRows.map((r: any) => r.category)));
+  const availableForCustomer = returnedItems.filter((r: any) => Boolean(r.in_stock)).length;
+
+  return {
+    diagnostic: true,
+    resolvedRestaurantId: restaurantId,
+    resolvedBranchId: branchId,
+    totalRestaurantItems: allRows.length,
+    visibleForBranch: returnedItems.length,
+    availableForCustomer,
+    returnedCount: returnedItems.length,
+    excludedCount: excludedItems.length,
+    allCategories,
+    categoriesSummary,
+    excludedItems,
+  };
 }
 
 export async function getMenuItem(identifier: string, restaurantId: string = DEFAULT_RESTAURANT_ID): Promise<MenuItem | null> {
@@ -149,8 +271,9 @@ export async function createMenuItem(
       ];
       const res = await query(sql, params);
       return mapRowToMenuItem(res.rows[0]);
-    } catch (err) {
+    } catch (err: any) {
       console.error('[MenuService] Error inserting menu item in PG:', err);
+      throw err;
     }
   }
 
@@ -269,8 +392,9 @@ export async function updateMenuItem(
       ];
       const res = await query(sql, params);
       return res.rows.length > 0 ? mapRowToMenuItem(res.rows[0]) : null;
-    } catch (err) {
+    } catch (err: any) {
       console.error('[MenuService] Error updating menu item in PG:', err);
+      throw err;
     }
   }
 
@@ -323,8 +447,9 @@ export async function toggleStock(
       }
       const res = await query(sql, params);
       return res.rows.length > 0 ? mapRowToMenuItem(res.rows[0]) : null;
-    } catch (err) {
+    } catch (err: any) {
       console.error('[MenuService] Error toggling stock in PG:', err);
+      throw err;
     }
   }
 
@@ -365,8 +490,9 @@ export async function deleteMenuItem(identifier: string, restaurantId: string = 
         [identifier, restaurantId]
       );
       return (res.rowCount ?? 0) > 0;
-    } catch (err) {
+    } catch (err: any) {
       console.error('[MenuService] Error deleting menu item from PG:', err);
+      throw err;
     }
   }
 

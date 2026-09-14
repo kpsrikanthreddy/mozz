@@ -3,8 +3,9 @@ import { SeoRouteConfig } from '../types/seoTypes';
 import { Breadcrumbs } from '../components/Breadcrumbs';
 import { SeoFaqSection } from '../components/SeoFaqSection';
 import { FoodCard } from '../components/FoodCard';
-import { INITIAL_MENU } from '../data/menuData';
+import { useStore } from '../context/StoreContext';
 import { MenuItem, DietaryType } from '../types';
+import { isCategoryMatch } from '../utils/categoryUtils';
 import {
   Flame,
   Utensils,
@@ -81,22 +82,28 @@ const CHINESE_CATEGORIES: ChineseCategoryConfig[] = [
 ];
 
 export const ChineseSpecialsPage: React.FC<ChineseSpecialsPageProps> = ({ routeConfig }) => {
+  const { menu } = useStore();
   const [dietaryFilter, setDietaryFilter] = useState<DietaryType | 'all'>('all');
   const [searchQuery, setSearchQuery] = useState<string>('');
 
-  // Extract all Chinese items in one lookup
+  // Extract all active in-stock Chinese items
+  const activeMenu = useMemo(() => {
+    return menu.filter((m) => m.inStock !== false);
+  }, [menu]);
+
   const allChineseItems = useMemo(() => {
-    const validCategoryKeys = new Set(CHINESE_CATEGORIES.map((c) => c.categoryKey));
-    return INITIAL_MENU.filter((m) => validCategoryKeys.has(m.category));
-  }, []);
+    return activeMenu.filter((m) =>
+      CHINESE_CATEGORIES.some((c) => isCategoryMatch(m.category, c.categoryKey))
+    );
+  }, [activeMenu]);
 
   // Filter items based on dietary and search criteria
   const filteredCategoryData = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
 
     return CHINESE_CATEGORIES.map((cat) => {
-      const items = INITIAL_MENU.filter((item) => {
-        if (item.category !== cat.categoryKey) return false;
+      const items = activeMenu.filter((item) => {
+        if (!isCategoryMatch(item.category, cat.categoryKey)) return false;
         if (dietaryFilter !== 'all' && item.dietary !== dietaryFilter) return false;
         if (q) {
           const matchName = item.name.toLowerCase().includes(q);
@@ -109,10 +116,10 @@ export const ChineseSpecialsPage: React.FC<ChineseSpecialsPageProps> = ({ routeC
       return {
         ...cat,
         items,
-        totalInCat: INITIAL_MENU.filter((m) => m.category === cat.categoryKey).length,
+        totalInCat: activeMenu.filter((m) => isCategoryMatch(m.category, cat.categoryKey)).length,
       };
     });
-  }, [dietaryFilter, searchQuery]);
+  }, [activeMenu, dietaryFilter, searchQuery]);
 
   const totalFilteredCount = useMemo(() => {
     return filteredCategoryData.reduce((acc, cat) => acc + cat.items.length, 0);
@@ -193,7 +200,7 @@ export const ChineseSpecialsPage: React.FC<ChineseSpecialsPageProps> = ({ routeC
                 All Chinese ({allChineseItems.length})
               </button>
               {CHINESE_CATEGORIES.map((cat) => {
-                const count = INITIAL_MENU.filter((m) => m.category === cat.categoryKey).length;
+                const count = activeMenu.filter((m) => isCategoryMatch(m.category, cat.categoryKey)).length;
                 return (
                   <button
                     key={cat.id}

@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useStore } from '../context/StoreContext';
-import { INITIAL_MENU } from '../data/menuData';
 import { MenuItem, DietaryType, CartItem } from '../types';
 import {
   Search,
@@ -35,7 +34,7 @@ export const SearchModal: React.FC<SearchModalProps> = ({
   onClose,
   onNavigateToMenu,
 }) => {
-  const { addToCart, openCustomizer } = useStore();
+  const { menu, addToCart, openCustomizer } = useStore();
   const [query, setQuery] = useState('');
   const [dietaryFilter, setDietaryFilter] = useState<DietaryType | 'all'>('all');
   const inputRef = useRef<HTMLInputElement>(null);
@@ -63,11 +62,15 @@ export const SearchModal: React.FC<SearchModalProps> = ({
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [isOpen, onClose]);
 
-  // Filter items matching the query and dietary filter
+  // Filter items matching the query and dietary filter from live menu
   const searchResults = useMemo(() => {
     const trimmed = query.trim().toLowerCase();
 
-    return INITIAL_MENU.filter((item) => {
+    return menu.filter((item) => {
+      // Hide out of stock items
+      if (item.inStock === false) {
+        return false;
+      }
       if (dietaryFilter !== 'all' && item.dietary !== dietaryFilter) {
         return false;
       }
@@ -76,10 +79,10 @@ export const SearchModal: React.FC<SearchModalProps> = ({
       }
       const matchesName = item.name.toLowerCase().includes(trimmed);
       const matchesDesc = (item.description || '').toLowerCase().includes(trimmed);
-      const matchesCat = item.category.toLowerCase().replace(/_/g, ' ').includes(trimmed);
+      const matchesCat = (item.category || '').toLowerCase().replace(/_/g, ' ').includes(trimmed);
       return matchesName || matchesDesc || matchesCat;
     });
-  }, [query, dietaryFilter]);
+  }, [menu, query, dietaryFilter]);
 
   if (!isOpen) return null;
 

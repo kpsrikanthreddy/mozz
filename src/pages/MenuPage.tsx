@@ -3,21 +3,14 @@ import { SeoRouteConfig } from '../types/seoTypes';
 import { Breadcrumbs } from '../components/Breadcrumbs';
 import { SeoFaqSection } from '../components/SeoFaqSection';
 import { FoodCard } from '../components/FoodCard';
-import { INITIAL_MENU } from '../data/menuData';
+import { useStore } from '../context/StoreContext';
 import { FoodCategory, DietaryType } from '../types';
+import {
+  normalizeCategorySlug,
+  isCategoryMatch,
+  getActiveCategoryTabs,
+} from '../utils/categoryUtils';
 import { Search, SlidersHorizontal, Utensils, Check } from 'lucide-react';
-
-const MENU_CATEGORIES: { id: FoodCategory; label: string }[] = [
-  { id: 'pocket_pizza_veg', label: 'Veg Pocket Pizzas' },
-  { id: 'pocket_pizza_nonveg', label: 'Non-Veg Pocket Pizzas' },
-  { id: 'dessert_pizza', label: 'Dessert Pizzas' },
-  { id: 'chinese_starters', label: 'Chinese Starters' },
-  { id: 'fried_rice', label: 'Fried Rice' },
-  { id: 'noodles', label: 'Noodles' },
-  { id: 'maggie', label: 'Maggie' },
-  { id: 'momos', label: 'Momos' },
-  { id: 'drinks', label: 'Drinks' },
-];
 
 interface MenuPageProps {
   routeConfig: SeoRouteConfig;
@@ -25,50 +18,12 @@ interface MenuPageProps {
 }
 
 export const normalizeCategoryParam = (rawCategory: string | null | undefined): string => {
-  if (!rawCategory) return 'all';
-  const clean = decodeURIComponent(rawCategory).trim().toLowerCase().replace(/['"]/g, '');
-
-  if (
-    clean === 'chinese starters gachibowli' ||
-    clean === 'chinese-starters-gachibowli' ||
-    clean === 'chinese_starters' ||
-    clean === 'chinese-starters' ||
-    clean === 'chinese starters' ||
-    clean.includes('chinese starters') ||
-    clean.includes('chinese')
-  ) {
-    return 'chinese_starters';
-  }
-
-  if (
-    clean === 'momos gachibowli' ||
-    clean === 'momos-gachibowli' ||
-    clean === 'momos' ||
-    clean === 'momo' ||
-    clean.includes('momo')
-  ) {
-    return 'momos';
-  }
-
-  if (
-    clean === 'pocket-pizzas' ||
-    clean === 'pocket_pizzas' ||
-    clean === 'pocket pizzas' ||
-    clean.includes('pocket') ||
-    clean.includes('pizza')
-  ) {
-    return 'pocket_pizzas';
-  }
-
-  const match = MENU_CATEGORIES.find(
-    (c) => c.id.toLowerCase() === clean || c.label.toLowerCase() === clean
-  );
-  if (match) return match.id;
-
-  return 'all';
+  return normalizeCategorySlug(rawCategory);
 };
 
 export const MenuPage: React.FC<MenuPageProps> = ({ routeConfig, currentPath }) => {
+  const { menu } = useStore();
+
   const getInitialCategory = (): string => {
     if (typeof window === 'undefined') return 'all';
     const query = currentPath && currentPath.includes('?')
@@ -108,32 +63,43 @@ export const MenuPage: React.FC<MenuPageProps> = ({ routeConfig, currentPath }) 
     }
   }, [currentPath]);
 
+  // Active category tabs derived from live menu (including any custom created categories)
+  const categoryTabs = useMemo(() => {
+    return getActiveCategoryTabs(menu, false);
+  }, [menu]);
+
+  const activeInStockCount = useMemo(() => {
+    return menu.filter((item) => item.inStock !== false).length;
+  }, [menu]);
+
   const filteredItems = useMemo(() => {
-    return INITIAL_MENU.filter((item) => {
-      // Category match
-      if (selectedCategory !== 'all') {
-        if (selectedCategory === 'pocket_pizzas') {
-          if (!item.category.includes('pocket_pizza')) {
-            return false;
-          }
-        } else if (item.category !== selectedCategory) {
-          return false;
-        }
+    return menu.filter((item) => {
+      // Requirement 5: Only hide items when in_stock === false
+      if (item.inStock === false) {
+        return false;
       }
+
+      // Category match with normalized slug comparison
+      if (selectedCategory !== 'all' && !isCategoryMatch(item.category, selectedCategory)) {
+        return false;
+      }
+
       // Dietary match
       if (dietaryFilter !== 'all' && item.dietary !== dietaryFilter) {
         return false;
       }
+
       // Search match
       if (searchQuery.trim()) {
-        const query = searchQuery.toLowerCase();
+        const query = searchQuery.toLowerCase().trim();
         const matchesName = item.name.toLowerCase().includes(query);
-        const matchesDesc = item.description?.toLowerCase().includes(query);
-        return matchesName || matchesDesc;
+        const matchesDesc = (item.description || '').toLowerCase().includes(query);
+        const matchesCat = (item.category || '').toLowerCase().includes(query);
+        return matchesName || matchesDesc || matchesCat;
       }
       return true;
     });
-  }, [selectedCategory, dietaryFilter, searchQuery]);
+  }, [menu, selectedCategory, dietaryFilter, searchQuery]);
 
   return (
     <div className="min-h-screen bg-stone-50">
@@ -174,7 +140,7 @@ export const MenuPage: React.FC<MenuPageProps> = ({ routeConfig, currentPath }) 
                 onClick={() => setDietaryFilter('all')}
                 className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition ${
                   dietaryFilter === 'all'
-                    ? 'bg-white text-stone-900 shadow-xs'
+                    ? 'bg-stone-900 text-white shadow-xs'
                     : 'text-stone-600 hover:text-stone-900'
                 }`}
               >
@@ -223,18 +189,20 @@ export const MenuPage: React.FC<MenuPageProps> = ({ routeConfig, currentPath }) 
                   : 'bg-stone-100 text-stone-700 hover:bg-stone-200'
               }`}
             >
-              All Categories ({INITIAL_MENU.length})
+              All Categories ({activeInStockCount})
             </button>
             {selectedCategory === 'pocket_pizzas' && (
               <button
                 type="button"
                 className="px-3.5 py-1.5 rounded-lg text-xs font-semibold shrink-0 bg-primary-600 text-white"
               >
-                All Pocket Pizzas ({INITIAL_MENU.filter((m) => m.category.includes('pocket_pizza')).length})
+                All Pocket Pizzas ({menu.filter((m) => m.inStock !== false && isCategoryMatch(m.category, 'pocket_pizzas')).length})
               </button>
             )}
-            {MENU_CATEGORIES.map((cat) => {
-              const count = INITIAL_MENU.filter((m) => m.category === cat.id).length;
+            {categoryTabs.map((cat) => {
+              const isSelected =
+                selectedCategory === cat.id ||
+                normalizeCategorySlug(selectedCategory) === normalizeCategorySlug(cat.id);
               return (
                 <button
                   key={cat.id}
@@ -242,16 +210,18 @@ export const MenuPage: React.FC<MenuPageProps> = ({ routeConfig, currentPath }) 
                   onClick={() => {
                     setSelectedCategory(cat.id);
                     if (typeof window !== 'undefined' && window.history) {
-                      window.history.replaceState({}, '', `/menu?category=${encodeURIComponent(cat.label)}`);
+                      window.history.replaceState({}, '', `/menu?category=${encodeURIComponent(cat.id)}`);
                     }
                   }}
-                  className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold shrink-0 transition ${
-                    selectedCategory === cat.id
+                  className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold shrink-0 transition flex items-center gap-1.5 ${
+                    isSelected
                       ? 'bg-primary-600 text-white'
                       : 'bg-stone-100 text-stone-700 hover:bg-stone-200'
                   }`}
                 >
-                  {cat.label} ({count})
+                  <span>{cat.icon}</span>
+                  <span>{cat.name}</span>
+                  <span className="opacity-80">({cat.count})</span>
                 </button>
               );
             })}

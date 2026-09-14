@@ -227,15 +227,26 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const refreshMenu = useCallback(async () => {
     try {
       setIsLoadingMenu(true);
-      const res = await fetch('/api/menu');
+      const res = await fetch(`/api/menu?_t=${Date.now()}`, {
+        cache: 'no-store',
+        headers: {
+          'Cache-Control': 'no-cache, no-store, must-revalidate',
+          Pragma: 'no-cache',
+        },
+      });
       if (res.ok) {
         const data = await res.json();
-        if (Array.isArray(data) && data.length > 0) {
+        if (Array.isArray(data)) {
+          // Live PostgreSQL data as source of truth. Do not fall back to INITIAL_MENU.
           setMenu(data);
+        } else {
+          console.error('[StoreContext] Invalid payload from GET /api/menu, expected array, got:', typeof data);
         }
+      } else {
+        console.error(`[StoreContext] Failed to load menu from GET /api/menu. HTTP ${res.status} ${res.statusText}`);
       }
     } catch (err) {
-      console.warn('[StoreContext] Could not fetch menu from backend, using default initial items:', err);
+      console.error('[StoreContext] Network exception fetching GET /api/menu:', err);
     } finally {
       setIsLoadingMenu(false);
     }
@@ -780,7 +791,21 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     setIsAdminAuthenticated(false);
   };
 
-  // Admin menu editing connected to PostgreSQL Backend
+  // Admin menu editing connected to PostgreSQL Backend (Authenticated)
+  const getAdminAuthHeaders = () => {
+    const token =
+      typeof window !== 'undefined'
+        ? localStorage.getItem('starters4u_admin_jwt_token')
+        : null;
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    };
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+    return headers;
+  };
+
   const toggleItemStock = async (itemId: string) => {
     // Optimistic UI toggle
     setMenu((prev) =>
@@ -788,16 +813,19 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     );
 
     try {
-      const res = await fetch(`/api/menu/${encodeURIComponent(itemId)}/stock`, {
+      const res = await fetch(`/api/admin/menu/${encodeURIComponent(itemId)}/stock`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
+        headers: getAdminAuthHeaders(),
       });
       if (res.ok) {
         const updatedItem = await res.json();
         setMenu((prev) => prev.map((item) => (item.id === itemId ? updatedItem : item)));
+      } else {
+        await refreshMenu();
       }
     } catch (err) {
       console.error('Error updating stock in backend:', err);
+      await refreshMenu();
     }
   };
 
@@ -815,25 +843,28 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     );
 
     try {
-      const res = await fetch(`/api/menu/${encodeURIComponent(itemId)}`, {
+      const res = await fetch(`/api/admin/menu/${encodeURIComponent(itemId)}`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
+        headers: getAdminAuthHeaders(),
         body: JSON.stringify(updates),
       });
       if (res.ok) {
         const updatedItem = await res.json();
         setMenu((prev) => prev.map((item) => (item.id === itemId ? updatedItem : item)));
+      } else {
+        await refreshMenu();
       }
     } catch (err) {
       console.error('Error updating price in backend:', err);
+      await refreshMenu();
     }
   };
 
   const addMenuItem = async (newItemData: Omit<MenuItem, 'id'>) => {
     try {
-      const res = await fetch('/api/menu', {
+      const res = await fetch('/api/admin/menu', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: getAdminAuthHeaders(),
         body: JSON.stringify(newItemData),
       });
 
@@ -841,6 +872,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         const created: MenuItem = await res.json();
         setMenu((prev) => [created, ...prev]);
         soundService.playChime('success');
+        await refreshMenu();
       }
     } catch (err) {
       console.error('Error adding menu item:', err);
@@ -853,42 +885,61 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     );
 
     try {
-      const res = await fetch(`/api/menu/${encodeURIComponent(itemId)}`, {
+      const res = await fetch(`/api/admin/menu/${encodeURIComponent(itemId)}`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
+        headers: getAdminAuthHeaders(),
         body: JSON.stringify(updatedFields),
       });
       if (res.ok) {
         const updated = await res.json();
         setMenu((prev) => prev.map((item) => (item.id === itemId ? updated : item)));
         soundService.playChime('success');
+        await refreshMenu();
+      } else {
+        await refreshMenu();
       }
     } catch (err) {
       console.error('Error updating menu item:', err);
+      await refreshMenu();
     }
   };
 
   const deleteMenuItem = async (itemId: string) => {
     setMenu((prev) => prev.filter((item) => item.id !== itemId));
     try {
-      await fetch(`/api/menu/${encodeURIComponent(itemId)}`, { method: 'DELETE' });
-      soundService.playChime('notification');
+      const res = await fetch(`/api/admin/menu/${encodeURIComponent(itemId)}`, {
+        method: 'DELETE',
+        headers: getAdminAuthHeaders(),
+      });
+      if (res.ok) {
+        soundService.playChime('notification');
+        await refreshMenu();
+      } else {
+        await refreshMenu();
+      }
     } catch (err) {
       console.error('Error deleting menu item:', err);
+      await refreshMenu();
     }
   };
 
   const resetMenuToDefault = async () => {
     try {
-      const res = await fetch('/api/menu/reset', { method: 'POST' });
+      const res = await fetch('/api/admin/menu/reset', {
+        method: 'POST',
+        headers: getAdminAuthHeaders(),
+      });
       if (res.ok) {
         const data = await res.json();
         if (data.menu) setMenu(data.menu);
+        await refreshMenu();
       } else {
-        setMenu(INITIAL_MENU);
+        console.error('[StoreContext] Reset menu failed with status:', res.status);
+        await refreshMenu();
       }
     } catch (err) {
-      setMenu(INITIAL_MENU);
+      console.error('[StoreContext] Network error during resetMenuToDefault:', err);
+      await refreshMenu();
     }
   };
 
